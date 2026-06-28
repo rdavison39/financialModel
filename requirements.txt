@@ -1,0 +1,35 @@
+##############################################################
+
+# Davison Financial Model
+
+#
+
+# Runtime Dependencies
+
+#
+
+# NOTE:
+
+# The authoritative dependency list is maintained in
+
+# pyproject.toml.
+
+#
+
+# This file exists for convenience and compatibility with
+
+# tools that expect a requirements.txt file.
+
+##############################################################
+
+SQLAlchemy>=2.0
+alembic>=1.16
+openpyxl>=3.1
+
+# Optional future packages
+
+# yfinance>=0.2
+
+# pandas>=2.3
+
+# plotly>=6.0

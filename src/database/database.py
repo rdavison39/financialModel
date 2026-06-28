@@ -1,38 +1,48 @@
 """
 database.py
 
-Provides the SQLite database connection, SQLAlchemy engine,
-and session management for the Financial Model application.
+Database service for the Davison Financial Model.
 
-Author: Ron Davison / ChatGPT
+Responsibilities
+----------------
+* Create the SQLite database
+* Create all tables
+* Manage SQLAlchemy sessions
+* Dispose of connections cleanly
+
+Author:
+    Ron Davison / ChatGPT
 """
 
-from pathlib import Path
+from __future__ import annotations
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import scoped_session
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session
 
-from database.base import Base
+from src.config.settings import settings
+from src.database.base import Base
+from src.utils.logger import logger
 
 
-class Database:
+class DatabaseService:
     """
-    Handles creation of the SQLite database and SQLAlchemy sessions.
+    Central database manager.
     """
 
-    def __init__(self, database_file: Path):
-        """
-        Initialize the database.
+    def __init__(self) -> None:
 
-        Args:
-            database_file:
-                Full path to the SQLite database file.
-        """
+        #
+        # Ensure database folder exists.
+        #
 
-        self.database_file = database_file
+        settings.database_folder.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
 
-        database_url = f"sqlite:///{database_file}"
+        database_url = f"sqlite:///{settings.database_file}"
 
         self.engine = create_engine(
             database_url,
@@ -40,11 +50,13 @@ class Database:
             future=True,
         )
 
-        self.Session = sessionmaker(
-            bind=self.engine,
-            autoflush=False,
-            autocommit=False,
-            future=True,
+        self.session_factory = scoped_session(
+            sessionmaker(
+                bind=self.engine,
+                autoflush=False,
+                autocommit=False,
+                expire_on_commit=False,
+            )
         )
 
     def create_database(self) -> None:
@@ -54,21 +66,33 @@ class Database:
         Safe to call multiple times.
         """
 
+        logger.info("Creating database...")
+
         Base.metadata.create_all(self.engine)
+
+        logger.info("Database ready.")
 
     def get_session(self) -> Session:
         """
-        Return a SQLAlchemy session.
-
-        Returns:
-            SQLAlchemy Session object.
+        Returns a SQLAlchemy session.
         """
 
-        return self.Session()
+        return self.session_factory()
 
     def close(self) -> None:
         """
-        Dispose of the database engine.
+        Close all database connections.
         """
 
+        logger.info("Closing database.")
+
+        self.session_factory.remove()
+
         self.engine.dispose()
+
+
+#
+# Singleton instance
+#
+
+database = DatabaseService()

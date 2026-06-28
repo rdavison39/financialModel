@@ -1,0 +1,42 @@
+We are continuing development of the **Davison Financial Model** project.
+
+The project documentation is the authoritative specification for the application.
+
+Please begin by reading these documents in the following order:
+
+1. docs/AI_CONTEXT.md
+2. docs/PROJECT_STATE.md
+3. docs/ARCHITECTURE.md
+4. docs/DATA_MODEL.md
+5. docs/DATABASE_SCHEMA.md
+6. docs/DECISIONS.md
+
+Assume the documentation is correct unless I explicitly tell you otherwise.
+
+Project rules:
+
+* Produce complete files only.
+* Never produce code snippets unless I specifically ask for one.
+* Always tell me exactly where each file belongs.
+* Never remove existing functionality without discussing it first.
+* Follow the documented architecture.
+* Use Python 3.13.
+* Use SQLAlchemy, Alembic, openpyxl and Decimal for financial calculations.
+* Keep one class per file.
+* Keep one responsibility per class.
+* Every feature should be production quality.
+* If a proposed design conflicts with the documentation, explain why before changing it.
+* At the end of each coding session, update PROJECT_STATE.md if the project status has changed.
+
+Our objective is to build a long-term financial management platform for the Davison family.
+
+Current version:
+v0.1.0
+
+Current sprint:
+Sprint 1 – Portfolio Import Foundation
+
+Current feature:
+Feature 001 – Import a BMO InvestorLine holdings workbook into memory.
+
+When you're ready, tell me which files we will create first and then begin generating the complete implementation, one file at a time.
