@@ -1,115 +1,64 @@
 # ============================================================
-
 # Davison Financial Model
-
-# EditorConfig
-
 #
-
-# https://editorconfig.org/
-
+# pyproject.toml
 #
-
-# Keeps coding style consistent across editors.
-
+# Project configuration for build tools, pytest, Ruff and MyPy.
 # ============================================================
 
-# Top-most EditorConfig file
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
 
-root = true
+[project]
+name = "financial-model"
+version = "0.1.0"
+description = "Davison Financial Model"
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [
+    { name = "Ron Davison" }
+]
+dependencies = [
+    "sqlalchemy>=2.0",
+    "openpyxl>=3.1",
+]
 
-# ------------------------------------------------------------
+# ============================================================
+# Pytest
+# ============================================================
 
-# Default settings
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v"
 
-# ------------------------------------------------------------
+# ============================================================
+# Ruff
+# ============================================================
 
-[*]
+[tool.ruff]
+line-length = 79
+target-version = "py313"
 
-charset = utf-8
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+]
 
-end_of_line = lf
+# ============================================================
+# MyPy
+# ============================================================
 
-insert_final_newline = true
-
-trim_trailing_whitespace = true
-
-indent_style = space
-
-indent_size = 4
-
-# ------------------------------------------------------------
-
-# Markdown
-
-#
-
-# Do not trim trailing spaces because Markdown uses them
-
-# for explicit line breaks.
-
-# ------------------------------------------------------------
-
-[*.md]
-
-trim_trailing_whitespace = false
-
-# ------------------------------------------------------------
-
-# YAML
-
-# ------------------------------------------------------------
-
-[*.{yml,yaml}]
-
-indent_size = 2
-
-# ------------------------------------------------------------
-
-# JSON
-
-# ------------------------------------------------------------
-
-[*.json]
-
-indent_size = 2
-
-# ------------------------------------------------------------
-
-# TOML
-
-# ------------------------------------------------------------
-
-[*.toml]
-
-indent_size = 4
-
-# ------------------------------------------------------------
-
-# PowerShell
-
-# ------------------------------------------------------------
-
-[*.ps1]
-
-end_of_line = crlf
-
-# ------------------------------------------------------------
-
-# Windows Batch Files
-
-# ------------------------------------------------------------
-
-[*.{bat,cmd}]
-
-end_of_line = crlf
-
-# ------------------------------------------------------------
-
-# Git Commit Messages
-
-# ------------------------------------------------------------
-
-[COMMIT_EDITMSG]
-
-max_line_length = 72
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+no_implicit_optional = true

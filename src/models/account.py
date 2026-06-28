@@ -1,7 +1,19 @@
 """
 account.py
 
-Defines the Account model used by the Financial Model.
+Defines the Account SQLAlchemy model.
+
+An Account represents a single investment account held at a brokerage.
+
+Examples:
+    - Ron RRSP
+    - Ron TFSA
+    - Ron Margin
+    - Sonya RRSP
+    - Family Trust
+
+An Account is relatively static and is referenced by every
+HoldingSnapshot imported from brokerage exports.
 
 Author:
     Ron Davison / ChatGPT
@@ -9,51 +21,59 @@ Author:
 
 from __future__ import annotations
 
-from datetime import datetime
-from enum import Enum
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean
-from sqlalchemy import DateTime
-from sqlalchemy import Enum as SqlEnum
-from sqlalchemy import Integer
+from sqlalchemy import ForeignKey
 from sqlalchemy import String
-
+from sqlalchemy import UniqueConstraint
 from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import relationship
 
 from src.database.base import Base
 
-
-class AccountType(Enum):
-    """Supported brokerage account types."""
-
-    RRSP = "RRSP"
-    TFSA = "TFSA"
-    MARGIN = "Margin"
-    RESP = "RESP"
-    TRUST = "Trust"
-    CORPORATE = "Corporate"
-    CASH = "Cash"
-    OTHER = "Other"
+if TYPE_CHECKING:
+    from src.models.brokerage import Brokerage
+    from src.models.holding_snapshot import HoldingSnapshot
 
 
 class Account(Base):
     """
-    Represents a brokerage account.
+    Represents one investment account.
     """
 
     __tablename__ = "accounts"
 
-    id: Mapped[int] = mapped_column(
-        Integer,
-        primary_key=True,
-        autoincrement=True,
+    __table_args__ = (
+        UniqueConstraint(
+            "brokerage_id",
+            "account_number",
+            name="uq_accounts_brokerage_account_number",
+        ),
     )
+
+    #
+    # Primary Key
+    #
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    #
+    # Foreign Key
+    #
+
+    brokerage_id: Mapped[int] = mapped_column(
+        ForeignKey("brokerages.id"),
+        nullable=False,
+    )
+
+    #
+    # Account Information
+    #
 
     account_number: Mapped[str] = mapped_column(
         String(50),
-        unique=True,
         nullable=False,
         index=True,
     )
@@ -66,72 +86,44 @@ class Account(Base):
     owner: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
+        index=True,
     )
 
-    institution: Mapped[str] = mapped_column(
-        String(100),
-        nullable=False,
-        default="RBC Direct Investing",
-    )
-
-    account_type: Mapped[AccountType] = mapped_column(
-        SqlEnum(AccountType),
+    account_type: Mapped[str] = mapped_column(
+        String(50),
         nullable=False,
     )
 
     currency: Mapped[str] = mapped_column(
         String(10),
         nullable=False,
-        default="CAD",
     )
 
-    is_active: Mapped[bool] = mapped_column(
+    active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
         default=True,
-    )
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.utcnow,
-        nullable=False,
-    )
-
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-        nullable=False,
     )
 
     #
     # Relationships
     #
 
-    holdings: Mapped[list["Holding"]] = relationship(
-        "Holding",
-        back_populates="account",
-        cascade="all, delete-orphan",
+    brokerage: Mapped["Brokerage"] = relationship(
+        back_populates="accounts",
     )
 
-    @property
-    def is_registered(self) -> bool:
-        """
-        Returns True if this is a registered account.
-        """
-
-        return self.account_type in (
-            AccountType.RRSP,
-            AccountType.TFSA,
-            AccountType.RESP,
-        )
+    holding_snapshots: Mapped[list["HoldingSnapshot"]] = relationship(
+        back_populates="account",
+    )
 
     def __repr__(self) -> str:
-
+        """
+        Return a concise representation of the account.
+        """
         return (
             f"Account("
             f"id={self.id}, "
-            f"name='{self.account_name}', "
-            f"type='{self.account_type.value}', "
-            f"owner='{self.owner}')"
+            f"number='{self.account_number}', "
+            f"name='{self.account_name}')"
         )

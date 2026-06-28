@@ -1,12 +1,17 @@
 """
 imported_position.py
 
-Defines the ImportedPosition data transfer object (DTO).
+Defines the ImportedPosition DTO.
 
-This object represents a single security imported from a brokerage
-export file. It is intentionally independent of the database and is
-used to move data from the importer to the validation and persistence
-layers.
+ImportedPosition is an immutable data transfer object produced by
+brokerage importers.
+
+It contains only factual information read directly from a brokerage
+export.
+
+Importers create these objects.
+
+ImportService consumes them.
 
 Author:
     Ron Davison / ChatGPT
@@ -16,13 +21,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Optional
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class ImportedPosition:
     """
-    Represents one imported security from a brokerage export.
+    Immutable investment position imported from a brokerage export.
     """
 
     #
@@ -30,53 +34,37 @@ class ImportedPosition:
     #
 
     account_number: str
-    account_name: str
-    owner: str
-    brokerage: str
 
     #
     # Security Information
     #
 
     ticker: str
+
     company_name: str
+
+    exchange: str
+
     currency: str
 
+    asset_class: str
+
     #
-    # Position
+    # Position Information
     #
 
     shares: Decimal
-    average_cost: Decimal
-    book_cost: Decimal
 
-    #
-    # Imported Market Information
-    #
-    # These values come directly from the brokerage export.
-    # They are NOT considered authoritative long-term.
-    #
+    average_cost: Decimal
+
+    total_cost: Decimal
 
     market_price: Decimal
+
     market_value: Decimal
+
     unrealized_gain: Decimal
 
-    #
-    # Optional Information
-    #
+    annual_dividend: Decimal
 
-    sector: Optional[str] = None
-    industry: Optional[str] = None
-    exchange: Optional[str] = None
-    country: Optional[str] = None
-
-    def __str__(self) -> str:
-        """
-        Human-readable representation.
-        """
-
-        return (
-            f"{self.account_name}: "
-            f"{self.ticker} "
-            f"({self.shares} shares)"
-        )
+    dividend_yield: Decimal

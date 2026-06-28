@@ -1,12 +1,16 @@
 """
-imported_position.py
+imported_account.py
 
-Defines the ImportedPosition data transfer object (DTO).
+Defines the ImportedAccount DTO.
 
-This object represents a single security imported from a brokerage
-export file. It is intentionally independent of the database and is
-used to move data from the importer to the validation and persistence
-layers.
+ImportedAccount is an immutable data transfer object produced by
+brokerage importers.
+
+It contains only factual data read from a brokerage export.
+
+Importers create these objects.
+
+ImportService consumes them.
 
 Author:
     Ron Davison / ChatGPT
@@ -15,68 +19,22 @@ Author:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
-from typing import Optional
 
 
-@dataclass(slots=True)
-class ImportedPosition:
+@dataclass(frozen=True, slots=True)
+class ImportedAccount:
     """
-    Represents one imported security from a brokerage export.
+    Immutable account imported from a brokerage export.
     """
 
-    #
-    # Account Information
-    #
+    brokerage_name: str
 
     account_number: str
+
     account_name: str
+
     owner: str
-    brokerage: str
 
-    #
-    # Security Information
-    #
+    account_type: str
 
-    ticker: str
-    company_name: str
     currency: str
-
-    #
-    # Position
-    #
-
-    shares: Decimal
-    average_cost: Decimal
-    book_cost: Decimal
-
-    #
-    # Imported Market Information
-    #
-    # These values come directly from the brokerage export.
-    # They are NOT considered authoritative long-term.
-    #
-
-    market_price: Decimal
-    market_value: Decimal
-    unrealized_gain: Decimal
-
-    #
-    # Optional Information
-    #
-
-    sector: Optional[str] = None
-    industry: Optional[str] = None
-    exchange: Optional[str] = None
-    country: Optional[str] = None
-
-    def __str__(self) -> str:
-        """
-        Human-readable representation.
-        """
-
-        return (
-            f"{self.account_name}: "
-            f"{self.ticker} "
-            f"({self.shares} shares)"
-        )
