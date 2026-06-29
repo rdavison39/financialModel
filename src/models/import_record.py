@@ -17,6 +17,7 @@ Author:
 
 from __future__ import annotations
 
+from datetime import UTC
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -63,10 +64,10 @@ class Import(Base):
     #
 
     import_timestamp: Mapped[datetime] = mapped_column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        index=True,
+    DateTime,
+    nullable=False,
+    default=lambda: datetime.now(UTC),
+    index=True,
     )
 
     source_folder: Mapped[str] = mapped_column(
