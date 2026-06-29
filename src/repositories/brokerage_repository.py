@@ -89,3 +89,34 @@ class BrokerageRepository(RepositoryBase[Brokerage]):
         result = self.session.scalar(statement)
 
         return 0 if result is None else int(result)
+
+    def create_if_missing(
+        self,
+        *,
+        name: str,
+        importer: str,
+        website: str = "",
+    ) -> Brokerage:
+        """
+        Return an existing brokerage or create a new one.
+
+        The brokerage is added to the current session but is not
+        committed. The caller is responsible for committing the
+        transaction.
+        """
+
+        brokerage = self.find_by_name(name)
+
+        if brokerage is not None:
+            return brokerage
+
+        brokerage = Brokerage(
+            name=name,
+            importer=importer,
+            website=website,
+            active=True,
+        )
+
+        self.add(brokerage)
+
+        return brokerage

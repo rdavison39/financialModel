@@ -1,13 +1,14 @@
 """
 imported_position.py
 
-Defines the ImportedPosition DTO.
+Defines the ImportedPosition data transfer object.
 
-ImportedPosition is an immutable data transfer object produced by
-brokerage importers.
+ImportedPosition is an immutable DTO representing a single investment
+position imported directly from a brokerage export.
 
-It contains only factual information read directly from a brokerage
-export.
+The field names intentionally mirror the terminology used by the
+brokerage workbook. Translation into the application's canonical
+database model is performed by ImportService.
 
 Importers create these objects.
 
@@ -30,41 +31,25 @@ class ImportedPosition:
     """
 
     #
-    # Account Information
-    #
-
-    account_number: str
-
-    #
     # Security Information
     #
 
-    ticker: str
+    symbol: str
 
-    company_name: str
+    description: str
 
-    exchange: str
+    security_type: str
 
     currency: str
 
-    asset_class: str
-
     #
-    # Position Information
+    # Imported Values
     #
 
-    shares: Decimal
+    quantity: Decimal
 
-    average_cost: Decimal
-
-    total_cost: Decimal
-
-    market_price: Decimal
+    unit_price: Decimal
 
     market_value: Decimal
 
-    unrealized_gain: Decimal
-
-    annual_dividend: Decimal
-
-    dividend_yield: Decimal
+    cost_basis: Decimal

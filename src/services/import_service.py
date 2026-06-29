@@ -1,17 +1,11 @@
 """
 import_service.py
 
-Business service responsible for importing brokerage data into the
-Davison Financial Model.
+Implements the ImportService.
 
-The ImportService coordinates the import process. It does not parse
-brokerage files and it does not perform SQL queries directly.
-
-Importers read files and produce DTOs.
-
-Repositories persist entities.
-
-The ImportService orchestrates the entire workflow.
+The ImportService bridges the importer layer and the persistence layer.
+It accepts imported DTO objects, validates them, persists them using
+repositories, and returns an ImportResult summarizing the operation.
 
 Author:
     Ron Davison / ChatGPT
@@ -19,84 +13,158 @@ Author:
 
 from __future__ import annotations
 
-from src.database.unit_of_work import UnitOfWork
-from src.services.service_base import ServiceBase
+from pathlib import Path
+
+from sqlalchemy.orm import Session
+
+from src.dto.imported_account import ImportedAccount
+from src.services.import_result import ImportResult
 
 
-class ImportService(ServiceBase):
+class ImportService:
     """
-    Coordinates the import of brokerage data.
-
-    Responsibilities
-    ----------------
-    * Validate imported DTOs.
-    * Create Brokerage records when necessary.
-    * Create Account records when necessary.
-    * Create Company records when necessary.
-    * Create an Import record.
-    * Create HoldingSnapshot records.
-    * Commit or roll back the transaction.
+    Imports brokerage data into the database.
     """
 
-    def __init__(
-        self,
-        uow: UnitOfWork,
-    ) -> None:
+    def __init__(self, session: Session) -> None:
         """
-        Initialize the ImportService.
-        """
+        Initializes the service.
 
-        super().__init__(uow)
+        Args:
+            session:
+                SQLAlchemy session.
+        """
+        self._session = session
 
     def import_data(
         self,
+        accounts: list[ImportedAccount],
+        source_file: Path,
+    ) -> ImportResult:
+        """
+        Imports one brokerage export.
+
+        Args:
+            accounts:
+                Imported brokerage accounts.
+
+            source_file:
+                Workbook that produced the DTOs.
+
+        Returns:
+            ImportResult summarizing the import.
+        """
+        result = ImportResult()
+
+        try:
+            self._validate(accounts)
+
+            import_record = self._create_import(
+                source_file=source_file,
+                account_count=len(accounts),
+            )
+
+            result.import_id = import_record.id
+
+            for account in accounts:
+                self._process_account(
+                    account=account,
+                    import_record=import_record,
+                    result=result,
+                )
+
+            self._session.commit()
+
+            result.mark_success()
+
+        except Exception:
+            self._session.rollback()
+            raise
+
+        return result
+
+    def _validate(
+        self,
+        accounts: list[ImportedAccount],
     ) -> None:
         """
-        Execute a brokerage import.
+        Validates imported DTOs.
 
-        This method will be implemented during the importer milestone.
+        Validation implementation will be added later.
         """
+        return
 
-        raise NotImplementedError(
-            "ImportService.import_data() has not yet been implemented."
-        )
-
-    #
-    # Private Helper Methods
-    #
-
-    def _create_import_record(self) -> None:
+    def _create_import(
+        self,
+        source_file: Path,
+        account_count: int,
+    ):
         """
-        Create the Import record.
+        Creates an Import record.
 
-        Implementation to follow.
+        Implementation added later.
         """
-
         raise NotImplementedError
 
-    def _process_accounts(self) -> None:
+    def _process_account(
+        self,
+        account: ImportedAccount,
+        import_record,
+        result: ImportResult,
+    ) -> None:
         """
-        Process imported accounts.
-
-        Implementation to follow.
+        Processes one brokerage account.
         """
-
         raise NotImplementedError
 
-    def _process_companies(self) -> None:
+    def _find_or_create_brokerage(
+        self,
+        name: str,
+    ):
         """
-        Process imported companies.
-
-        Implementation to follow.
+        Finds or creates a Brokerage.
         """
-
         raise NotImplementedError
 
-    def _process_holdings(self) -> None:
+    def _find_or_create_account(
+        self,
+        account: ImportedAccount,
+        brokerage,
+    ):
         """
-        Process imported holding snapshots.
-
-        Implementation to follow.
+        Finds or creates an Account.
         """
+        raise NotImplementedError
 
+    def _find_or_create_company(
+        self,
+        ticker: str,
+        description: str,
+    ):
+        """
+        Finds or creates a Company.
+        """
+        raise NotImplementedError
+
+    def _create_holding_snapshot(
+        self,
+        position,
+        account,
+        company,
+        import_record,
+    ) -> None:
+        """
+        Creates one HoldingSnapshot.
+        """
+        raise NotImplementedError
+
+    def _create_cash_snapshot(
+        self,
+        cash,
+        account,
+        import_record,
+    ) -> None:
+        """
+        Creates one CashBalanceSnapshot.
+        """
         raise NotImplementedError

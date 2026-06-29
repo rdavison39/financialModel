@@ -4,10 +4,10 @@ Unit tests for bmo_investorline_importer.py
 
 from __future__ import annotations
 
+from src.dto.imported_account import ImportedAccount
 from src.importers.bmo_investorline_importer import (
     BMOInvestorLineImporter,
 )
-from src.importers.imported_account import ImportedAccount
 
 
 def test_import_returns_account(

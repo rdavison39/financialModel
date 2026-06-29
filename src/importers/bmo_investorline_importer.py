@@ -12,11 +12,11 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
+from src.dto.imported_account import ImportedAccount
+from src.dto.imported_cash import ImportedCash
+from src.dto.imported_position import ImportedPosition
 from src.importers.bmo_layout import BMOLayout
 from src.importers.excel_reader import ExcelReader
-from src.importers.imported_account import ImportedAccount
-from src.importers.imported_cash import ImportedCash
-from src.importers.imported_position import ImportedPosition
 from src.importers.worksheet_helper import WorksheetHelper
 
 
@@ -27,7 +27,7 @@ class BMOInvestorLineImporter:
 
     def __init__(
         self,
-        filename: str |Path,
+        filename: str | Path,
     ) -> None:
 
         self._filename = Path(filename)
