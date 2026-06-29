@@ -1,477 +1,334 @@
 # Davison Financial Model
 
-# Architecture Decision Log
+# PROJECT_STATE.md
 
-**Version:** 1.0
+**Version:** 0.2.0 (End of Phase 1)
 
----
-
-# Purpose
-
-This document records significant architectural and design decisions made during the development of the Davison Financial Model.
-
-The objective is to preserve the reasoning behind important decisions so they are not lost over time.
-
-Every architectural change that affects the long-term design of the application should be recorded here.
+**Last Updated:** June 28, 2026
 
 ---
 
-# Decision Format
+# Current Status
 
-Each decision includes:
+## Current Phase
 
-* Decision Number
-* Date
-* Status
-* Decision
-* Context
-* Alternatives Considered
-* Rationale
-* Consequences
+**Phase 2**
 
----
+## Current Milestone
 
-# Decision 001
+Implement the **ImportService**.
 
-## Title
+The importer infrastructure is complete and fully tested.
 
-Use brokerage exports instead of direct brokerage integration.
-
-### Status
-
-Accepted
-
-### Date
-
-2026-06
-
-### Context
-
-Two approaches were considered.
-
-Option 1
-
-Import exported Excel files from the brokerage.
-
-Option 2
-
-Log directly into the brokerage website and retrieve holdings.
-
-### Alternatives Considered
-
-* Website automation
-* Screen scraping
-* Brokerage APIs
-
-### Decision
-
-The application will use exported brokerage files.
-
-Initially:
-
-* BMO InvestorLine
-
-Future brokerages may be added.
-
-### Rationale
-
-Advantages
-
-* Reliable
-* Repeatable
-* No credentials stored
-* No dependence on brokerage websites
-* No multi-factor authentication issues
-* Easy to test
-* Historical exports can be archived
-
-### Consequences
-
-Users must periodically export holdings from their brokerage.
-
-This manual step is considered acceptable.
+The next objective is to persist imported brokerage data into the database while maintaining the project's layered architecture.
 
 ---
 
-# Decision 002
+# Build Status
 
-## Title
+## Python
 
-Maintain complete import history.
+3.13
 
-### Status
+## Test Status
 
-Accepted
+```
+107 tests passed
+0 failures
+0 warnings
+```
 
-### Context
-
-Two approaches were considered.
-
-Option A
-
-Overwrite existing holdings.
-
-Option B
-
-Preserve every brokerage import.
-
-### Decision
-
-Every brokerage import becomes permanent.
-
-Nothing is overwritten.
-
-### Rationale
-
-Historical information is valuable.
-
-Examples
-
-* Portfolio history
-* Asset allocation changes
-* Historical reporting
-* Performance analysis
-
-### Consequences
-
-Database size increases over time.
-
-This is considered acceptable.
-
-Storage costs are negligible.
+The project builds cleanly.
 
 ---
 
-# Decision 003
+# Completed Components
 
-## Title
+## Database Layer
 
-Database stores facts only.
+Completed.
 
-### Status
+Models:
 
-Accepted
-
-### Decision
-
-The database stores factual information only.
-
-Examples
-
-* Shares
-* Book Cost
-* Market Prices
-* Import History
-
-Calculated values are not persisted.
-
-Examples
-
-* Portfolio Value
-* Asset Allocation
-* Retirement Projections
-* Estate Values
-
-### Rationale
-
-Avoid duplicated information.
-
-Prevent stale calculations.
-
-Improve consistency.
-
----
-
-# Decision 004
-
-## Title
-
-Historical data is immutable.
-
-### Status
-
-Accepted
-
-### Decision
-
-Historical imports are never modified.
-
-Updates create new records.
-
-### Rationale
-
-Provides a complete audit trail.
-
-Allows historical reporting.
-
-Improves confidence in calculations.
-
----
-
-# Decision 005
-
-## Title
-
-Python Decimal used for financial calculations.
-
-### Status
-
-Accepted
-
-### Decision
-
-Floating point numbers will not be used for money.
-
-Python Decimal and SQL NUMERIC fields will be used.
-
-### Rationale
-
-Financial calculations require deterministic precision.
-
-Avoid floating point rounding errors.
-
----
-
-# Decision 006
-
-## Title
-
-Use SQLAlchemy.
-
-### Status
-
-Accepted
-
-### Decision
-
-SQLAlchemy is the application's ORM.
-
-### Alternatives
-
-* Raw SQL
-* Peewee
-* Django ORM
-
-### Rationale
-
-SQLAlchemy is mature, well documented, flexible and widely used.
-
----
-
-# Decision 007
-
-## Title
-
-Use Alembic.
-
-### Status
-
-Accepted
-
-### Decision
-
-Database schema changes will be managed through Alembic.
-
-Manual schema changes are prohibited.
-
-### Rationale
-
-Supports controlled database evolution.
-
-Provides repeatable deployments.
-
----
-
-# Decision 008
-
-## Title
-
-Use openpyxl.
-
-### Status
-
-Accepted
-
-### Decision
-
-Excel import and report generation will use openpyxl.
-
-### Alternatives
-
-* pandas
-* xlrd
-
-### Rationale
-
-The brokerage exports contain structured worksheets rather than pure tables.
-
-openpyxl provides direct worksheet access and supports future report generation.
-
----
-
-# Decision 009
-
-## Title
-
-Use HoldingSnapshot entity.
-
-### Status
-
-Accepted
-
-### Context
-
-Several names were considered.
-
-* Position
-* PortfolioSnapshot
-* Holding
+* Brokerage
+* Account
+* Company
+* Import
 * HoldingSnapshot
-
-### Decision
-
-HoldingSnapshot was selected.
-
-### Rationale
-
-The imported data represents a single holding at one point in time.
-
-The name accurately reflects the business concept.
+* CashBalanceSnapshot
+* MarketPrice
 
 ---
 
-# Decision 010
+## Repository Layer
 
-## Title
+Completed.
 
-Importer returns DTOs.
+Repositories:
 
-### Status
+* BrokerageRepository
+* AccountRepository
+* CompanyRepository
+* ImportRepository
+* HoldingSnapshotRepository
+* CashBalanceSnapshotRepository
+* MarketPriceRepository
 
-Accepted
+Repository responsibilities are limited to persistence.
 
-### Decision
-
-Importers return DTO objects.
-
-They never communicate directly with the database.
-
-### Rationale
-
-Separates importing from persistence.
-
-Improves testing.
-
-Supports future brokerages.
+Business logic is intentionally excluded.
 
 ---
 
-# Decision 011
+## Import Infrastructure
 
-## Title
+Completed.
 
-Repository Pattern
+Components:
 
-### Status
+* ExcelReader
+* WorksheetHelper
+* BMOLayout
+* BMOInvestorLineImporter
 
-Accepted
+The importer successfully reads a BMO InvestorLine holdings export and produces DTO objects.
 
-### Decision
-
-Business services never communicate directly with SQLAlchemy.
-
-Repositories provide all persistence.
-
-### Rationale
-
-Improves maintainability.
-
-Simplifies testing.
-
-Encapsulates database access.
+The importer has no dependency on SQLAlchemy or the database.
 
 ---
 
-# Decision 012
+## DTO Layer
 
-## Title
+Completed.
 
-Professional Documentation
+DTOs:
 
-### Status
+* ImportedAccount
+* ImportedCash
+* ImportedPosition
 
-Accepted
-
-### Decision
-
-The project documentation is considered part of the source code.
-
-Documentation shall be maintained alongside implementation.
-
-### Rationale
-
-Documentation becomes the permanent memory of the project.
-
-Future development should rely on documentation rather than conversation history.
+DTOs provide the contract between the importer layer and the service layer.
 
 ---
 
-# Decision 013
+## Test Infrastructure
 
-## Title
+Completed.
 
-Architecture Freeze
+Current testing includes:
 
-### Status
+* Repository tests
+* Importer tests
+* Model tests
+* DTO tests
+* Helper class tests
 
-Accepted
-
-### Decision
-
-Once Version 1.0 architecture is complete, changes to the core architecture require an entry in this document.
-
-### Rationale
-
-Prevents unnecessary redesign.
-
-Encourages stability.
-
-Allows controlled evolution.
+All tests are currently passing.
 
 ---
 
-# Future Decisions
+# Current Architecture
 
-Future architectural decisions will be recorded here.
+```
+Excel Workbook
 
-Examples
+        │
 
-* Multi-currency support
-* Transaction engine
-* Dividend engine
-* Trust engine
-* Estate engine
-* Cloud synchronization
-* AI-assisted financial planning
+        ▼
+
+ExcelReader
+
+        │
+
+        ▼
+
+WorksheetHelper
+
+        │
+
+        ▼
+
+BMOLayout
+
+        │
+
+        ▼
+
+BMOInvestorLineImporter
+
+        │
+
+        ▼
+
+ImportedAccount DTO
+
+        │
+
+        ▼
+
+ImportService
+
+        │
+
+        ▼
+
+Repositories
+
+        │
+
+        ▼
+
+SQLite Database
+```
 
 ---
 
-# Review Process
+# Current Architectural Principles
 
-Before implementing a major architectural change:
+The following architectural rules are now considered established.
 
-1. Review existing decisions.
-2. Determine whether the change conflicts with previous decisions.
-3. Record a new decision.
-4. Update the relevant documentation.
-5. Implement the change.
+* Importers never communicate directly with SQLAlchemy.
+* Importers return DTO objects only.
+* DTOs are independent of persistence.
+* Repositories encapsulate all database access.
+* Business logic belongs in services.
+* SQLAlchemy models contain no business logic.
+* Historical data is immutable.
+* The database stores facts only.
+* Calculated values are never persisted.
 
 ---
 
-# Guiding Principle
+# Current Development Rules
 
-Architecture should evolve deliberately.
+The following development rules apply throughout the project.
 
-Design decisions should be based on long-term maintainability rather than short-term convenience.
+1. Always provide complete files unless a smaller edit is clearly preferable.
+2. Work on one file at a time.
+3. Never remove existing functionality without discussion.
+4. Maintain production-quality code.
+5. Use complete type hints.
+6. Use complete docstrings.
+7. Every feature should include unit tests.
+8. Keep responsibilities clearly separated.
+9. Prefer readability over cleverness.
+10. Keep the test suite green after every change.
 
-When in doubt, favour simplicity, transparency, and historical accuracy.
+---
+
+# Immediate Next Task
+
+Implement:
+
+```
+src/services/import_service.py
+```
+
+Responsibilities:
+
+* Accept ImportedAccount DTOs.
+* Validate imported data.
+* Create an Import record.
+* Find or create Brokerage.
+* Find or create Account.
+* Find or create Company.
+* Create HoldingSnapshot records.
+* Create CashBalanceSnapshot records.
+* Commit the transaction.
+* Roll back the transaction on failure.
+
+The ImportService becomes the bridge between the importer layer and the persistence layer.
+
+---
+
+# Upcoming Work
+
+## Phase 2
+
+ImportService
+
+* ImportService
+* ImportResult
+* Transaction management
+* Validation
+* Persistence
+
+---
+
+## Phase 3
+
+Folder Import
+
+* Import every workbook within a folder.
+* Support multiple accounts.
+* Support multiple brokerage files.
+
+---
+
+## Phase 4
+
+Portfolio Services
+
+* Portfolio calculations
+* Asset allocation
+* Historical portfolio views
+* Performance calculations
+
+---
+
+## Phase 5
+
+Market Data
+
+* Market price downloads
+* Company updates
+* Historical pricing
+* Dividend history
+
+---
+
+## Phase 6
+
+Planning Engines
+
+* Retirement planning
+* Tax planning
+* Estate planning
+* Trust planning
+
+---
+
+## Phase 7
+
+Reporting
+
+* Portfolio reports
+* Retirement reports
+* Tax reports
+* Estate reports
+
+---
+
+# Session Summary
+
+Completed during this development session:
+
+* Added CashBalanceSnapshot support.
+* Completed repository implementation.
+* Completed importer infrastructure.
+* Improved WorksheetHelper.
+* Updated ExcelReader to return WorksheetHelper objects.
+* Reorganized pytest fixtures.
+* Eliminated Python 3.13 deprecation warnings.
+* Restored a clean test suite.
+* Achieved:
+
+```
+107 tests passed
+0 failures
+0 warnings
+```
+
+This represents the completion of the project's foundation.
+
+The next development session will begin implementing the ImportService.

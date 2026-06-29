@@ -53,17 +53,35 @@ The application should answer questions that currently require:
 
 Current Phase
 
-Sprint 1
+Phase 2
 
-Current Feature
+Current Milestone
 
-Feature 001
+Implement the ImportService.
 
-Read one BMO InvestorLine holdings export.
+Current Status
 
-Implementation has begun.
+The foundational architecture is complete.
 
-Architecture is considered stable.
+Completed
+
+• SQLAlchemy model layer
+• Repository layer
+• Import infrastructure
+• DTO layer
+• CashBalanceSnapshot support
+• BMO InvestorLine importer
+• Comprehensive automated test suite
+
+Current Build Status
+
+107 pytest tests
+
+107 passing
+
+0 failures
+
+0 warnings
 
 ---
 

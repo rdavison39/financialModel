@@ -1,42 +1,114 @@
-We are continuing development of the **Davison Financial Model** project.
+# Financial Model Project - KICKOFF
 
-The project documentation is the authoritative specification for the application.
+We are continuing development of my Financial Model application.
 
-Please begin by reading these documents in the following order:
+## Project Rules
 
-1. docs/AI_CONTEXT.md
-2. docs/PROJECT_STATE.md
-3. docs/ARCHITECTURE.md
-4. docs/DATA_MODEL.md
-5. docs/DATABASE_SCHEMA.md
-6. docs/DECISIONS.md
+These rules are mandatory throughout the project.
 
-Assume the documentation is correct unless I explicitly tell you otherwise.
+1. Always provide COMPLETE files, never snippets.
+2. Only one file at a time unless I specifically request otherwise.
+3. Never remove existing functionality unless we discuss it first.
+4. Maintain clean architecture and production-quality code.
+5. If an existing file only requires a small change, tell me whether a full replacement or a small edit is the better approach.
+6. Python 3.13.
+7. SQLAlchemy ORM.
+8. SQLite database.
+9. Every new feature should include appropriate pytest tests.
+10. Maintain high code quality with type hints, docstrings, and consistent formatting.
 
-Project rules:
+## Current Project Status
 
-* Produce complete files only.
-* Never produce code snippets unless I specifically ask for one.
-* Always tell me exactly where each file belongs.
-* Never remove existing functionality without discussing it first.
-* Follow the documented architecture.
-* Use Python 3.13.
-* Use SQLAlchemy, Alembic, openpyxl and Decimal for financial calculations.
-* Keep one class per file.
-* Keep one responsibility per class.
-* Every feature should be production quality.
-* If a proposed design conflicts with the documentation, explain why before changing it.
-* At the end of each coding session, update PROJECT_STATE.md if the project status has changed.
+The project is fully building and all tests are passing.
 
-Our objective is to build a long-term financial management platform for the Davison family.
+Current status:
 
-Current version:
-v0.1.0
+* 107 pytest tests
+* 107 passing
+* 0 failures
+* 0 warnings
 
-Current sprint:
-Sprint 1 – Portfolio Import Foundation
+The datetime.utcnow() deprecation has already been converted to datetime.now(UTC).
 
-Current feature:
-Feature 001 – Import a BMO InvestorLine holdings workbook into memory.
+## Completed Architecture
 
-When you're ready, tell me which files we will create first and then begin generating the complete implementation, one file at a time.
+### Database
+
+* SQLAlchemy models
+* Repository layer
+* Entity factory
+* CashBalanceSnapshot model
+* HoldingSnapshot model
+* MarketPrice model
+* Import model
+* Brokerage model
+* Company model
+* Account model
+
+### Import Infrastructure
+
+Completed:
+
+* ExcelReader
+* WorksheetHelper
+* BMOLayout
+* BMOInvestorLineImporter
+
+DTOs completed:
+
+* ImportedAccount
+* ImportedCash
+* ImportedPosition
+
+The importer is intentionally independent of SQLAlchemy and the database.
+
+### Testing
+
+Importer tests
+
+Repository tests
+
+Model tests
+
+All passing.
+
+## Current Architecture
+
+Excel Workbook
+↓
+ExcelReader
+↓
+WorksheetHelper
+↓
+BMOLayout
+↓
+BMOInvestorLineImporter
+↓
+ImportedAccount
+↓
+(Next)
+ImportService
+↓
+Repositories
+↓
+SQLite Database
+
+## Next Task
+
+Begin implementing the ImportService.
+
+The ImportService should:
+
+* Accept ImportedAccount objects from the importer.
+* Create an Import record.
+* Find or create Brokerage.
+* Find or create Account.
+* Find or create Company.
+* Create HoldingSnapshot records.
+* Create CashBalanceSnapshot records.
+* Commit the transaction.
+* Roll back cleanly on failure.
+
+The importer must remain completely independent of SQLAlchemy.
+
+We will continue using a test-driven approach and build one file at a time.
