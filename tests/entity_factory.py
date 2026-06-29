@@ -27,6 +27,7 @@ from src.models.company import Company
 from src.models.holding_snapshot import HoldingSnapshot
 from src.models.import_record import Import
 from src.models.market_price import MarketPrice
+from src.models.cash_balance_snapshot import CashBalanceSnapshot
 
 
 def create_brokerage(
@@ -175,6 +176,31 @@ def create_holding_snapshot(
 
     return holding
 
+def create_cash_balance_snapshot(
+    session: Session,
+    import_record: Import,
+    account: Account,
+    **overrides,
+) -> CashBalanceSnapshot:
+    """
+    Create a CashBalanceSnapshot.
+    """
+
+    values = {
+        "import_id": import_record.id,
+        "account_id": account.id,
+        "currency": "CAD",
+        "cash_balance": Decimal("1000.00"),
+    }
+
+    values.update(overrides)
+
+    snapshot = CashBalanceSnapshot(**values)
+
+    session.add(snapshot)
+    session.flush()
+
+    return snapshot
 
 def create_market_price(
     session: Session,

@@ -28,6 +28,24 @@ class HoldingSnapshotRepository(
     Repository for HoldingSnapshot entities.
     """
 
+    def find_all(
+        self,
+    ) -> list[HoldingSnapshot]:
+        """
+        Return all holding snapshots.
+        """
+
+        statement = (
+            select(HoldingSnapshot)
+            .order_by(
+                HoldingSnapshot.account_id,
+                HoldingSnapshot.company_id,
+                HoldingSnapshot.import_id,
+            )
+        )
+
+        return self._list(statement)
+
     def find_by_id(
         self,
         holding_snapshot_id: int,
@@ -133,7 +151,9 @@ class HoldingSnapshotRepository(
 
         return self._list(statement)
 
-    def count(self) -> int:
+    def count(
+        self,
+    ) -> int:
         """
         Return the total number of holding snapshots.
         """

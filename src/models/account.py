@@ -35,6 +35,7 @@ from src.database.base import Base
 
 if TYPE_CHECKING:
     from src.models.brokerage import Brokerage
+    from src.models.cash_balance_snapshot import CashBalanceSnapshot
     from src.models.holding_snapshot import HoldingSnapshot
 
 
@@ -114,6 +115,12 @@ class Account(Base):
     )
 
     holding_snapshots: Mapped[list["HoldingSnapshot"]] = relationship(
+        back_populates="account",
+    )
+
+    cash_balance_snapshots: Mapped[
+        list["CashBalanceSnapshot"]
+    ] = relationship(
         back_populates="account",
     )
 
