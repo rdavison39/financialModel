@@ -2,9 +2,9 @@
 
 # PROJECT_STATE.md
 
-**Version:** 0.2.0 (End of Phase 1)
+**Version:** 0.2.1 (Phase 2 Active)
 
-**Last Updated:** June 28, 2026
+**Last Updated:** June 29, 2026
 
 ---
 
@@ -20,7 +20,8 @@ Implement the **ImportService**.
 
 The importer infrastructure is complete and fully tested.
 
-The next objective is to persist imported brokerage data into the database while maintaining the project's layered architecture.
+The current objective is to persist imported brokerage data into the
+database while maintaining the project's layered architecture.
 
 ---
 
@@ -38,7 +39,8 @@ The next objective is to persist imported brokerage data into the database while
 0 warnings
 ```
 
-The project builds cleanly.
+This was the documented status at the end of Phase 1. Re-run the test
+suite after each Phase 2 change.
 
 ---
 
@@ -241,11 +243,15 @@ The ImportService becomes the bridge between the importer layer and the persiste
 
 ---
 
-# Upcoming Work
+# Implementation Roadmap
 
-## Phase 2
+## Phase 2: ImportService
 
-ImportService
+Goal:
+
+Persist one imported BMO workbook into SQLite.
+
+Deliverables:
 
 * ImportService
 * ImportResult
@@ -255,30 +261,55 @@ ImportService
 
 ---
 
-## Phase 3
+## Phase 3: End-to-End Import
 
-Folder Import
+Goal:
+
+Make imports usable from a script, command-line workflow, or local web
+GUI.
 
 * Import every workbook within a folder.
+* Import one workbook from a browser upload form.
 * Support multiple accounts.
 * Support multiple brokerage files.
+* Produce a clear import summary.
+* Add duplicate-import safeguards where practical.
 
 ---
 
-## Phase 4
+## Phase 4: Portfolio Services
 
-Portfolio Services
+Goal:
 
+Calculate read-only portfolio views from stored facts.
+
+* Current portfolio view.
 * Portfolio calculations
 * Asset allocation
 * Historical portfolio views
 * Performance calculations
+* Account, company, and cash summaries
 
 ---
 
-## Phase 5
+## Phase 5: Reporting
 
-Market Data
+Goal:
+
+Generate useful Excel reports from calculated views.
+
+* Portfolio reports
+* Account reports
+* Holdings reports
+* Cash balance reports
+
+---
+
+## Phase 6: Market Data and Income
+
+Goal:
+
+Add external market facts and income tracking.
 
 * Market price downloads
 * Company updates
@@ -287,25 +318,16 @@ Market Data
 
 ---
 
-## Phase 6
+## Phase 7: Planning Engines
 
-Planning Engines
+Goal:
+
+Build long-range planning features after portfolio facts are reliable.
 
 * Retirement planning
 * Tax planning
 * Estate planning
 * Trust planning
-
----
-
-## Phase 7
-
-Reporting
-
-* Portfolio reports
-* Retirement reports
-* Tax reports
-* Estate reports
 
 ---
 

@@ -19,6 +19,9 @@ from sqlalchemy.orm import Session
 
 from src.repositories.account_repository import AccountRepository
 from src.repositories.brokerage_repository import BrokerageRepository
+from src.repositories.cash_balance_snapshot_repository import (
+    CashBalanceSnapshotRepository,
+)
 from src.repositories.company_repository import CompanyRepository
 from src.repositories.holding_snapshot_repository import (
     HoldingSnapshotRepository,
@@ -61,6 +64,8 @@ class UnitOfWork:
         self.imports = ImportRepository(session)
 
         self.holdings = HoldingSnapshotRepository(session)
+
+        self.cash_balances = CashBalanceSnapshotRepository(session)
 
         self.market_prices = MarketPriceRepository(session)
 

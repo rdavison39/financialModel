@@ -1,63 +1,158 @@
-"""
-imported_account.py
+# Davison Financial Model
 
-Defines the ImportedAccount data transfer object (DTO).
+## Project Overview
 
-An ImportedAccount represents a single brokerage account read from
-an export file. It contains the account information and every
-ImportedPosition found in that account.
+The Davison Financial Model is a private Python application for
+managing the Davison family's long-term financial information.
 
-This object is independent of the database.
+The goal is to create one trustworthy source of truth for portfolio
+holdings, cash balances, historical market data, retirement planning,
+tax planning, estate planning, trust planning, and financial reporting.
 
-Author:
-    Ron Davison / ChatGPT
-"""
+The first production milestone is reliable brokerage import. The
+application begins with BMO InvestorLine exports and is designed to
+support additional brokerages later.
 
-from __future__ import annotations
+## Current Objective
 
-from dataclasses import dataclass, field
+The current development objective is to persist imported BMO
+InvestorLine data into SQLite.
 
-from src.dto.imported_position import ImportedPosition
+The import path is:
 
+```text
+BMO Excel workbook
+-> ExcelReader
+-> WorksheetHelper
+-> BMOLayout
+-> BMOInvestorLineImporter
+-> ImportedAccount / ImportedPosition / ImportedCash DTOs
+-> ImportService
+-> Repositories
+-> SQLite database
+```
 
-@dataclass(slots=True)
-class ImportedAccount:
-    """
-    Represents one imported brokerage account.
-    """
+## Core Principles
 
-    #
-    # Account Information
-    #
+The project follows these principles:
 
-    account_number: str
-    account_name: str
-    owner: str
-    brokerage: str
-    account_type: str
-    currency: str = "CAD"
+* Store facts only.
+* Calculate derived values on demand.
+* Preserve historical imports permanently.
+* Keep importers independent from persistence.
+* Keep database access inside repositories.
+* Keep business orchestration inside services.
+* Use Decimal for financial values.
+* Keep features independently testable.
 
-    #
-    # Positions
-    #
+## Stored Facts
 
-    positions: list[ImportedPosition] = field(default_factory=list)
+The database stores factual records such as:
 
-    @property
-    def number_of_positions(self) -> int:
-        """
-        Returns the number of positions in the account.
-        """
-        return len(self.positions)
+* Brokerages
+* Accounts
+* Companies
+* Import records
+* Holding snapshots
+* Cash balance snapshots
+* Market prices
 
-    def add_position(self, position: ImportedPosition) -> None:
-        """
-        Adds a position to the account.
-        """
-        self.positions.append(position)
+The database does not store calculated values such as:
 
-    def __str__(self) -> str:
-        return (
-            f"{self.account_name} "
-            f"({self.number_of_positions} positions)"
-        )
+* Portfolio value
+* Unrealized gains
+* Asset allocation
+* Retirement projections
+* Tax projections
+* Estate projections
+
+Those values are calculated from stored facts.
+
+## Implementation Roadmap
+
+### Phase 2: ImportService
+
+Persist imported DTOs into the database.
+
+Deliverables:
+
+* Validate imported account data.
+* Create one Import record per import operation.
+* Find or create Brokerage, Account, and Company records.
+* Create immutable HoldingSnapshot records.
+* Create immutable CashBalanceSnapshot records.
+* Commit successful imports.
+* Roll back failed imports.
+* Return an ImportResult summary.
+
+### Phase 3: End-to-End Import
+
+Make a full import usable from a script or command-line entry point.
+
+Deliverables:
+
+* Import one workbook.
+* Provide a local web GUI to upload a workbook and display results.
+* Import every workbook in a folder.
+* Produce a clear import summary.
+* Add duplicate-import safeguards where practical.
+
+### Phase 4: Portfolio Services
+
+Build read-only portfolio calculations from snapshots.
+
+Deliverables:
+
+* Current portfolio view.
+* Account totals.
+* Company totals.
+* Cash totals.
+* Book cost and market value summaries.
+
+### Phase 5: Reporting
+
+Generate reports from calculated portfolio views.
+
+Deliverables:
+
+* Excel portfolio summary.
+* Account-level reports.
+* Holdings reports.
+* Cash balance reports.
+
+### Phase 6: Market Data and Income
+
+Add external market facts and dividend/income support.
+
+Deliverables:
+
+* Historical market prices.
+* Current price updates.
+* Dividend facts.
+* Income summaries.
+
+### Phase 7: Planning Engines
+
+Build long-range planning features after portfolio facts are reliable.
+
+Deliverables:
+
+* Retirement cash-flow modelling.
+* Tax estimates.
+* Estate projections.
+* Trust and inheritance scenarios.
+
+## Technology Stack
+
+* Python 3.13
+* SQLite
+* SQLAlchemy
+* openpyxl
+* pytest
+* ruff
+
+## Documentation
+
+The `docs` directory is the project specification. If documentation and
+implementation disagree, update the documentation or implementation
+until they tell the same story.

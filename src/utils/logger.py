@@ -1,9 +1,7 @@
 """
-settings.py
+logger.py
 
-Application configuration for the Davison Financial Model.
-
-All project paths and global configuration settings are defined here.
+Application logging for the Davison Financial Model.
 
 Author:
     Ron Davison / ChatGPT
@@ -11,75 +9,41 @@ Author:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
+import logging
+
+from src.config.settings import settings
 
 
-@dataclass(frozen=True)
-class Settings:
+def _create_logger() -> logging.Logger:
     """
-    Global application settings.
+    Create and configure the application logger.
     """
 
-    #
-    # Project folders
-    #
+    settings.logs_folder.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    project_root: Path = Path(__file__).resolve().parents[2]
+    app_logger = logging.getLogger("financial_model")
 
-    @property
-    def data_folder(self) -> Path:
-        return self.project_root / "data"
+    if app_logger.handlers:
+        return app_logger
 
-    @property
-    def database_folder(self) -> Path:
-        return self.project_root / "database"
+    app_logger.setLevel(logging.INFO)
 
-    @property
-    def reports_folder(self) -> Path:
-        return self.project_root / "reports"
+    formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    )
 
-    @property
-    def logs_folder(self) -> Path:
-        return self.project_root / "logs"
+    file_handler = logging.FileHandler(
+        settings.log_file,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(formatter)
 
-    #
-    # Database
-    #
+    app_logger.addHandler(file_handler)
 
-    @property
-    def database_file(self) -> Path:
-        return self.database_folder / "family.db"
-
-    #
-    # Logging
-    #
-
-    @property
-    def log_file(self) -> Path:
-        return self.logs_folder / "financial_model.log"
-
-    #
-    # Brokerage
-    #
-
-    brokerage_name: str = "RBC Direct Investing"
-
-    #
-    # Market Data
-    #
-
-    market_history_days: int = 3650
-
-    #
-    # Reporting
-    #
-
-    default_report_name: str = "FinancialModel.xlsx"
+    return app_logger
 
 
-#
-# Global settings object
-#
-
-settings = Settings()
+logger = _create_logger()
