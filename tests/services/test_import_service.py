@@ -74,6 +74,8 @@ def test_import_data_reuses_existing_master_records(
         Path("data/raw/bmo-first.xlsx"),
     )
 
+    account.statement_date = date(2026, 6, 29)
+
     second_result = service.import_data(
         [account],
         Path("data/raw/bmo-second.xlsx"),
@@ -93,6 +95,37 @@ def test_import_data_reuses_existing_master_records(
     assert uow.imports.count() == 2
     assert uow.holdings.count() == 4
     assert uow.cash_balances.count() == 2
+
+
+def test_import_data_rejects_duplicate_import_contents(
+    session: Session,
+) -> None:
+    """
+    ImportService does not create snapshots for the same BMO statement.
+    """
+
+    service = ImportService(UnitOfWork(session))
+    account = _imported_account()
+
+    first_result = service.import_data(
+        [account],
+        Path("data/raw/bmo-original.xlsx"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=f"import ID {first_result.import_id}",
+    ):
+        service.import_data(
+            [account],
+            Path("data/raw/bmo-copy.xlsx"),
+        )
+
+    uow = UnitOfWork(session)
+
+    assert uow.imports.count() == 1
+    assert uow.holdings.count() == 2
+    assert uow.cash_balances.count() == 1
 
 
 def test_import_data_rejects_empty_account_list(

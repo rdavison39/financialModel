@@ -13,7 +13,9 @@ Author:
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
+from hashlib import sha256
 from pathlib import Path
 
 from src.database.unit_of_work import UnitOfWork
@@ -45,6 +47,7 @@ class ImportService(ServiceBase):
     DEFAULT_SECTOR = "Unknown"
     DEFAULT_INDUSTRY = "Unknown"
     DEFAULT_COUNTRY = "Unknown"
+    FINGERPRINT_PREFIX = "BMO import fingerprint: "
 
     ZERO = Decimal("0")
 
@@ -85,6 +88,14 @@ class ImportService(ServiceBase):
 
         try:
             self._validate(accounts)
+            fingerprint = self._fingerprint(accounts)
+            duplicate_import = self._find_duplicate_import(fingerprint)
+
+            if duplicate_import is not None:
+                raise ValueError(
+                    "This BMO InvestorLine data was already imported as "
+                    f"import ID {duplicate_import.id}."
+                )
 
             brokerage, brokerage_created = (
                 self._find_or_create_brokerage()
@@ -99,6 +110,7 @@ class ImportService(ServiceBase):
                 source_file=source_file,
                 account_count=len(accounts),
                 holding_count=self._count_positions(accounts),
+                fingerprint=fingerprint,
             )
             self.flush()
 
@@ -241,6 +253,7 @@ class ImportService(ServiceBase):
         source_file: Path,
         account_count: int,
         holding_count: int,
+        fingerprint: str,
     ) -> Import:
         """
         Create an Import record.
@@ -253,12 +266,115 @@ class ImportService(ServiceBase):
             account_count=account_count,
             holding_count=holding_count,
             validation_status="VALID",
-            notes=f"Imported from {source_file.name}",
+            notes=(
+                f"Imported from {source_file.name}\n"
+                f"{self.FINGERPRINT_PREFIX}{fingerprint}"
+            ),
         )
 
         self.uow.imports.add(import_record)
 
         return import_record
+
+    def _find_duplicate_import(
+        self,
+        fingerprint: str,
+    ) -> Import | None:
+        """
+        Return the prior BMO import with matching imported facts, if any.
+        """
+
+        brokerage = self.uow.brokerages.find_by_name(
+            self.BROKERAGE_NAME
+        )
+
+        if brokerage is None:
+            return None
+
+        for import_record in self.uow.imports.find_by_brokerage(
+            brokerage.id
+        ):
+            if self._import_fingerprint(import_record) == fingerprint:
+                return import_record
+
+        return None
+
+    def _fingerprint(
+        self,
+        accounts: list[ImportedAccount],
+    ) -> str:
+        """
+        Return a stable fingerprint of the factual BMO import contents.
+        """
+
+        payload = {
+            "brokerage": self.BROKERAGE_NAME,
+            "accounts": sorted(
+                (
+                    {
+                        "account_number": account.account_number,
+                        "account_name": account.account_name,
+                        "account_type": account.account_type,
+                        "statement_date": account.statement_date.isoformat(),
+                        "cash": sorted(
+                            (
+                                {
+                                    "currency": cash.currency,
+                                    "amount": str(cash.amount),
+                                }
+                                for cash in account.cash
+                            ),
+                            key=lambda cash: cash["currency"],
+                        ),
+                        "positions": sorted(
+                            (
+                                {
+                                    "symbol": position.symbol,
+                                    "description": position.description,
+                                    "security_type": position.security_type,
+                                    "currency": position.currency,
+                                    "quantity": str(position.quantity),
+                                    "unit_price": str(position.unit_price),
+                                    "market_value": str(position.market_value),
+                                    "cost_basis": str(position.cost_basis),
+                                }
+                                for position in account.positions
+                            ),
+                            key=lambda position: (
+                                position["symbol"],
+                                position["currency"],
+                            ),
+                        ),
+                    }
+                    for account in accounts
+                ),
+                key=lambda account: account["account_number"],
+            ),
+        }
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+        return sha256(encoded).hexdigest()
+
+    def _import_fingerprint(
+        self,
+        import_record: Import,
+    ) -> str | None:
+        """
+        Return a BMO fingerprint recorded in an import's audit notes.
+        """
+
+        if import_record.notes is None:
+            return None
+
+        for line in import_record.notes.splitlines():
+            if line.startswith(self.FINGERPRINT_PREFIX):
+                return line.removeprefix(self.FINGERPRINT_PREFIX)
+
+        return None
 
     def _process_account(
         self,

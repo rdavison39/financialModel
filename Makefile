@@ -63,7 +63,7 @@ test:
 pytest
 
 run:
-python src/main.py
+python -m src.main
 
 clean:
 find . -type d -name "**pycache**" -exec rm -rf {} +
