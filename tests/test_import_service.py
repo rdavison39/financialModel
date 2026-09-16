@@ -227,3 +227,87 @@ def test_import_preserves_decimal_values(session):
 
     assert cash is not None
     assert cash.amount == Decimal("2101.22")
+
+
+def test_import_persists_brokerage_values(session):
+    """ImportService persists the brokerage-supplied holding values."""
+
+    imported_account = BMOImporter(BMO_FILE).import_file()
+
+    source_holding = next(
+        holding
+        for holding in imported_account.holdings
+        if holding.symbol == "BAM:CA"
+    )
+
+    service = ImportService(session)
+
+    service.import_snapshot(
+        brokerage_name="BMO",
+        imported_account=imported_account,
+        file_name="Bmo-1.xlsx",
+    )
+
+    account = session.scalar(
+        select(Account).where(
+            Account.account_number == imported_account.account_number
+        )
+    )
+
+    assert account is not None
+
+    holding = session.scalar(
+        select(HoldingSnapshot).where(
+            HoldingSnapshot.account_id == account.id,
+            HoldingSnapshot.quantity == source_holding.quantity,
+        )
+    )
+
+    assert holding is not None
+    assert holding.quantity == source_holding.quantity
+    assert holding.average_cost == source_holding.average_cost
+    assert holding.price == source_holding.price
+    assert holding.market_value == source_holding.market_value
+    assert holding.unrealized_gain == source_holding.unrealized_gain
+
+
+def test_import_persists_nesbitt_brokerage_values(session):
+    """ImportService persists Nesbitt-supplied holding values."""
+
+    imported_account = NesbittImporter(NESBITT_FILE).import_file()
+
+    source_holding = next(
+        holding
+        for holding in imported_account.holdings
+        if holding.symbol == "GRT.UN:CA"
+    )
+
+    service = ImportService(session)
+
+    service.import_snapshot(
+        brokerage_name="Nesbitt Burns",
+        imported_account=imported_account,
+        file_name="Nesbit-1.xlsx",
+    )
+
+    account = session.scalar(
+        select(Account).where(
+            Account.account_number == imported_account.account_number
+        )
+    )
+
+    assert account is not None
+
+    holding = session.scalar(
+        select(HoldingSnapshot).where(
+            HoldingSnapshot.account_id == account.id,
+            HoldingSnapshot.quantity == source_holding.quantity,
+        )
+    )
+
+    assert holding is not None
+    assert holding.quantity == source_holding.quantity
+    assert holding.average_cost == source_holding.average_cost
+    assert holding.price == source_holding.price
+    assert holding.market_value == source_holding.market_value
+    assert holding.unrealized_gain == source_holding.unrealized_gain

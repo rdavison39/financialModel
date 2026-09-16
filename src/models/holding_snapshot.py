@@ -43,6 +43,16 @@ class HoldingSnapshot(Base):
         nullable=False,
     )
 
+    average_cost: Mapped[Decimal] = mapped_column(
+        Numeric(20, 6),
+        nullable=False,
+    )
+
+    unrealized_gain: Mapped[Decimal] = mapped_column(
+        Numeric(20, 6),
+        nullable=False,
+    )
+
     market_value: Mapped[Decimal] = mapped_column(
         Numeric(20, 2),
         nullable=False,

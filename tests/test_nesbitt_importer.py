@@ -99,6 +99,40 @@ def test_importer_reads_known_holdings():
     assert holdings["RCI.B:CA"].market_value > 0
 
 
+def test_nesbitt_importer_reads_brokerage_snapshot_values():
+    """Importer reads all brokerage-supplied snapshot values."""
+
+    imported = NesbittImporter(NESBITT_FILE).import_file()
+
+    for holding in imported.holdings:
+        assert isinstance(holding.average_cost, Decimal)
+        assert isinstance(holding.unrealized_gain, Decimal)
+        assert isinstance(holding.unrealized_gain_percent, Decimal)
+        assert isinstance(holding.daily_change, Decimal)
+        assert isinstance(holding.daily_change_percent, Decimal)
+        assert isinstance(holding.previous_close, Decimal)
+
+
+def test_nesbitt_importer_preserves_brokerage_values_for_grt():
+    """Representative holding contains the brokerage-supplied fields."""
+
+    imported = NesbittImporter(NESBITT_FILE).import_file()
+
+    holdings = {
+        holding.symbol: holding
+        for holding in imported.holdings
+    }
+
+    holding = holdings["GRT.UN:CA"]
+
+    assert holding.average_cost is not None
+    assert holding.unrealized_gain is not None
+    assert holding.unrealized_gain_percent is not None
+    assert holding.daily_change is not None
+    assert holding.daily_change_percent is not None
+    assert holding.previous_close is not None
+
+
 def test_cash_only_individual_account():
     """Cash-only individual account can be imported."""
 

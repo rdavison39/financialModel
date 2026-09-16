@@ -89,8 +89,10 @@ class ImportService:
                 company_id=company.id,
                 snapshot_date=imported_account.snapshot_date,
                 quantity=imported_holding.quantity,
+                average_cost=imported_holding.average_cost,
                 price=imported_holding.price,
                 market_value=imported_holding.market_value,
+                unrealized_gain=imported_holding.unrealized_gain,
                 currency=imported_holding.currency,
             )
 

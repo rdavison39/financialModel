@@ -7,7 +7,7 @@ snapshot timestamp, cash balances, and security holdings.
 
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 import re
 
@@ -29,8 +29,14 @@ class ImportedHolding:
     symbol: str
     company_name: str
     quantity: Decimal
+    average_cost: Decimal
     price: Decimal
     market_value: Decimal
+    unrealized_gain: Decimal
+    unrealized_gain_percent: Decimal
+    daily_change: Decimal
+    daily_change_percent: Decimal
+    previous_close: Decimal
     currency: str
 
 
@@ -53,6 +59,32 @@ class BMOImporter:
         """Initialize the importer."""
         self.file_path = Path(file_path)
 
+    @staticmethod
+    def _decimal_or_zero(value: object) -> Decimal:
+        """Convert a numeric spreadsheet value to Decimal.
+
+        Brokerage exports can contain text placeholders in optional
+        numeric columns. Treat blank/non-numeric optional values as zero.
+        """
+        if value is None:
+            return Decimal("0")
+
+        if isinstance(value, Decimal):
+            return value
+
+        if isinstance(value, (int, float)):
+            return Decimal(str(value))
+
+        text = str(value).strip()
+
+        if not text:
+            return Decimal("0")
+
+        try:
+            return Decimal(text.replace(",", "").replace("$", "").strip())
+        except InvalidOperation:
+            return Decimal("0")
+
     def import_file(self) -> ImportedAccount:
         """Read the BMO Excel file and return its imported data."""
         workbook = load_workbook(
@@ -62,8 +94,7 @@ class BMOImporter:
 
         if self.SHEET_NAME not in workbook.sheetnames:
             raise ValueError(
-                f"Expected worksheet '{self.SHEET_NAME}' "
-                f"was not found."
+                f"Expected worksheet '{self.SHEET_NAME}' was not found."
             )
 
         worksheet = workbook[self.SHEET_NAME]
@@ -142,11 +173,17 @@ class BMOImporter:
             if not symbol:
                 continue
 
-            quantity = worksheet.cell(row, 3).value
             company_name = worksheet.cell(row, 2).value
+            quantity = worksheet.cell(row, 3).value
+            average_cost = worksheet.cell(row, 4).value
             price = worksheet.cell(row, 6).value
             market_value = worksheet.cell(row, 10).value
             currency = worksheet.cell(row, 11).value
+            unrealized_gain = worksheet.cell(row, 12).value
+            unrealized_gain_percent = worksheet.cell(row, 14).value
+            daily_change = worksheet.cell(row, 22).value
+            daily_change_percent = worksheet.cell(row, 23).value
+            previous_close = worksheet.cell(row, 25).value
 
             if quantity is None or market_value is None:
                 continue
@@ -156,8 +193,18 @@ class BMOImporter:
                     symbol=str(symbol),
                     company_name=str(company_name or ""),
                     quantity=Decimal(str(quantity)),
-                    price=Decimal(str(price or 0)),
+                    average_cost=self._decimal_or_zero(average_cost),
+                    price=self._decimal_or_zero(price),
                     market_value=Decimal(str(market_value)),
+                    unrealized_gain=self._decimal_or_zero(unrealized_gain),
+                    unrealized_gain_percent=self._decimal_or_zero(
+                        unrealized_gain_percent
+                    ),
+                    daily_change=self._decimal_or_zero(daily_change),
+                    daily_change_percent=self._decimal_or_zero(
+                        daily_change_percent
+                    ),
+                    previous_close=self._decimal_or_zero(previous_close),
                     currency=str(currency or "CAD"),
                 )
             )

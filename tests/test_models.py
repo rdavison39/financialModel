@@ -3,6 +3,7 @@ Tests for the database models.
 """
 
 from decimal import Decimal
+from datetime import date, datetime
 
 from src.models.account import Account
 from src.models.brokerage import Brokerage
@@ -82,15 +83,15 @@ def test_create_holding_snapshot(session):
     session.add_all([account, company])
     session.commit()
 
-    from datetime import datetime
-
     snapshot = HoldingSnapshot(
         account_id=account.id,
         company_id=company.id,
         snapshot_date=datetime(2026, 9, 15, 15, 59, 7),
         quantity=Decimal("947"),
         price=Decimal("65.46"),
+        average_cost=Decimal("42.50"),
         market_value=Decimal("61990.62"),
+        unrealized_gain=Decimal("21785.62"),
         currency="CAD",
     )
 
@@ -99,7 +100,11 @@ def test_create_holding_snapshot(session):
 
     assert snapshot.id is not None
     assert snapshot.quantity == Decimal("947")
+    assert snapshot.price == Decimal("65.46")
+    assert snapshot.average_cost == Decimal("42.50")
     assert snapshot.market_value == Decimal("61990.62")
+    assert snapshot.unrealized_gain == Decimal("21785.62")
+    assert snapshot.currency == "CAD"
 
 
 def test_create_cash_snapshot(session):
@@ -117,8 +122,6 @@ def test_create_cash_snapshot(session):
 
     session.add(account)
     session.commit()
-
-    from datetime import datetime
 
     snapshot = CashSnapshot(
         account_id=account.id,
@@ -150,8 +153,6 @@ def test_create_import_record(session):
     session.add(account)
     session.commit()
 
-    from datetime import datetime
-
     record = ImportRecord(
         brokerage_id=brokerage.id,
         account_id=account.id,
@@ -182,8 +183,6 @@ def test_create_account_portfolio_snapshot(session):
     session.add(account)
     session.commit()
 
-    from datetime import date
-
     snapshot = PortfolioSnapshot(
         account_id=account.id,
         snapshot_date=date(2026, 9, 15),
@@ -199,8 +198,6 @@ def test_create_account_portfolio_snapshot(session):
 
 def test_create_consolidated_portfolio_snapshot(session):
     """A consolidated portfolio snapshot can be stored."""
-
-    from datetime import date
 
     snapshot = PortfolioSnapshot(
         account_id=None,
