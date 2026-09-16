@@ -1,5 +1,5 @@
 """
-Service for comparing portfolio positions between two dates.
+Service for comparing portfolio positions and values between two dates.
 """
 
 from dataclasses import dataclass
@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from src.models.company import Company
 from src.models.holding_snapshot import HoldingSnapshot
 from src.models.import_record import ImportRecord
+from src.models.portfolio_snapshot import PortfolioSnapshot
 
 
 @dataclass
@@ -25,12 +26,68 @@ class PositionComparison:
     quantity_difference: Decimal
 
 
+@dataclass
+class PortfolioComparison:
+    """Complete portfolio comparison between two dates."""
+
+    first_value: Decimal | None
+    second_value: Decimal | None
+    value_difference: Decimal | None
+    positions: list[PositionComparison]
+
+
 class PortfolioComparisonService:
-    """Compares portfolio positions between two dates."""
+    """Compares portfolio positions and values between two dates."""
 
     def __init__(self, session: Session) -> None:
         """Initialize the comparison service."""
         self.session = session
+
+    def compare(
+        self,
+        first_date: date,
+        second_date: date,
+        account_id: int | None = None,
+    ) -> PortfolioComparison:
+        """
+        Compare portfolio values and positions between two dates.
+
+        The latest portfolio valuation on or before each requested date
+        is used for portfolio values.
+
+        The latest imported account snapshot on or before each requested
+        date is used for position quantities.
+
+        An account_id of None means the consolidated portfolio.
+        """
+
+        first_value = self._get_portfolio_value(
+            first_date,
+            account_id,
+        )
+
+        second_value = self._get_portfolio_value(
+            second_date,
+            account_id,
+        )
+
+        value_difference: Decimal | None = None
+
+        if first_value is not None and second_value is not None:
+            value_difference = second_value - first_value
+
+        positions = self.compare_positions(
+            first_date=first_date,
+            second_date=second_date,
+            account_id=account_id,
+        )
+
+        return PortfolioComparison(
+            first_value=first_value,
+            second_value=second_value,
+            value_difference=value_difference,
+            positions=positions,
+        )
 
     def compare_positions(
         self,
@@ -39,7 +96,7 @@ class PortfolioComparisonService:
         account_id: int | None = None,
     ) -> list[PositionComparison]:
         """
-        Compare positions between two dates.
+        Compare portfolio positions between two dates.
 
         An account_id of None means all accounts combined.
 
@@ -78,6 +135,32 @@ class PortfolioComparisonService:
             second_positions,
         )
 
+    def _get_portfolio_value(
+        self,
+        requested_date: date,
+        account_id: int | None,
+    ) -> Decimal | None:
+        """
+        Return the latest portfolio valuation on or before a date.
+        """
+
+        snapshot = self.session.scalar(
+            select(PortfolioSnapshot)
+            .where(
+                PortfolioSnapshot.account_id == account_id,
+                PortfolioSnapshot.snapshot_date <= requested_date,
+            )
+            .order_by(
+                PortfolioSnapshot.snapshot_date.desc()
+            )
+            .limit(1)
+        )
+
+        if snapshot is None:
+            return None
+
+        return snapshot.total_value
+
     def _get_snapshot_date(
         self,
         account_id: int,
@@ -99,7 +182,9 @@ class PortfolioComparisonService:
                 ImportRecord.account_id == account_id,
                 ImportRecord.snapshot_date < end_of_requested_date,
             )
-            .order_by(ImportRecord.snapshot_date.desc())
+            .order_by(
+                ImportRecord.snapshot_date.desc()
+            )
             .limit(1)
         )
 
@@ -154,12 +239,18 @@ class PortfolioComparisonService:
         for account_id in account_ids:
             first_account_positions = self._get_positions(
                 account_id,
-                self._get_snapshot_date(account_id, first_date),
+                self._get_snapshot_date(
+                    account_id,
+                    first_date,
+                ),
             )
 
             second_account_positions = self._get_positions(
                 account_id,
-                self._get_snapshot_date(account_id, second_date),
+                self._get_snapshot_date(
+                    account_id,
+                    second_date,
+                ),
             )
 
             self._add_positions(

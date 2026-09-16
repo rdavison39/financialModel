@@ -15,17 +15,18 @@ from src.services.portfolio_comparison_service import (
 
 
 class ComparisonTab(ttk.Frame):
-    """Compare portfolio positions between two dates."""
+    """Compare portfolio values and positions between two dates."""
 
     def __init__(self, parent: tk.Misc) -> None:
         super().__init__(parent)
 
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(3, weight=1)
+        self.rowconfigure(2, weight=1)
 
-        # ---------------------------------------------------------
-        # Title
-        # ---------------------------------------------------------
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        """Build the comparison page."""
 
         ttk.Label(
             self,
@@ -38,9 +39,9 @@ class ComparisonTab(ttk.Frame):
             pady=(0, 20),
         )
 
-        # ---------------------------------------------------------
+        # ------------------------------------------------------------
         # Date controls
-        # ---------------------------------------------------------
+        # ------------------------------------------------------------
 
         controls = ttk.Frame(self)
         controls.grid(
@@ -98,44 +99,40 @@ class ComparisonTab(ttk.Frame):
             controls,
             text="Compare",
             command=self._compare,
-        ).pack(
-            side="left",
-        )
+        ).pack(side="left")
 
-        # ---------------------------------------------------------
-        # Summary
-        # ---------------------------------------------------------
+        # ------------------------------------------------------------
+        # Portfolio summary
+        # ------------------------------------------------------------
 
-        summary = ttk.LabelFrame(
+        summary_frame = ttk.LabelFrame(
             self,
             text="Portfolio Summary",
             padding=10,
         )
 
-        summary.grid(
+        summary_frame.grid(
             row=2,
             column=0,
             sticky="ew",
             pady=(0, 15),
         )
 
-        summary.columnconfigure(1, weight=1)
-
         ttk.Label(
-            summary,
+            summary_frame,
             text="First Date Value:",
         ).grid(
             row=0,
             column=0,
             sticky="w",
-            padx=(0, 20),
+            padx=(0, 30),
             pady=5,
         )
 
         self.first_value_label = ttk.Label(
-            summary,
-            text="$0.00",
-            font=("Segoe UI", 11, "bold"),
+            summary_frame,
+            text="Not available",
+            font=("Segoe UI", 10, "bold"),
         )
 
         self.first_value_label.grid(
@@ -146,20 +143,20 @@ class ComparisonTab(ttk.Frame):
         )
 
         ttk.Label(
-            summary,
+            summary_frame,
             text="Second Date Value:",
         ).grid(
             row=1,
             column=0,
             sticky="w",
-            padx=(0, 20),
+            padx=(0, 30),
             pady=5,
         )
 
         self.second_value_label = ttk.Label(
-            summary,
-            text="$0.00",
-            font=("Segoe UI", 11, "bold"),
+            summary_frame,
+            text="Not available",
+            font=("Segoe UI", 10, "bold"),
         )
 
         self.second_value_label.grid(
@@ -170,32 +167,32 @@ class ComparisonTab(ttk.Frame):
         )
 
         ttk.Label(
-            summary,
+            summary_frame,
             text="Value Difference:",
         ).grid(
             row=2,
             column=0,
             sticky="w",
-            padx=(0, 20),
+            padx=(0, 30),
             pady=5,
         )
 
-        self.difference_value_label = ttk.Label(
-            summary,
-            text="$0.00",
-            font=("Segoe UI", 11, "bold"),
+        self.value_difference_label = ttk.Label(
+            summary_frame,
+            text="Not available",
+            font=("Segoe UI", 10, "bold"),
         )
 
-        self.difference_value_label.grid(
+        self.value_difference_label.grid(
             row=2,
             column=1,
             sticky="w",
             pady=5,
         )
 
-        # ---------------------------------------------------------
-        # Position differences
-        # ---------------------------------------------------------
+        # ------------------------------------------------------------
+        # Position table
+        # ------------------------------------------------------------
 
         positions_frame = ttk.LabelFrame(
             self,
@@ -216,6 +213,7 @@ class ComparisonTab(ttk.Frame):
             positions_frame,
             columns=(
                 "symbol",
+                "company",
                 "first_quantity",
                 "second_quantity",
                 "difference",
@@ -226,6 +224,11 @@ class ComparisonTab(ttk.Frame):
         self.positions_tree.heading(
             "symbol",
             text="Symbol",
+        )
+
+        self.positions_tree.heading(
+            "company",
+            text="Company",
         )
 
         self.positions_tree.heading(
@@ -245,24 +248,29 @@ class ComparisonTab(ttk.Frame):
 
         self.positions_tree.column(
             "symbol",
-            width=150,
+            width=130,
+        )
+
+        self.positions_tree.column(
+            "company",
+            width=250,
         )
 
         self.positions_tree.column(
             "first_quantity",
-            width=180,
+            width=160,
             anchor="e",
         )
 
         self.positions_tree.column(
             "second_quantity",
-            width=180,
+            width=160,
             anchor="e",
         )
 
         self.positions_tree.column(
             "difference",
-            width=180,
+            width=160,
             anchor="e",
         )
 
@@ -285,12 +293,12 @@ class ComparisonTab(ttk.Frame):
         )
 
         self.positions_tree.configure(
-            yscrollcommand=scrollbar.set
+            yscrollcommand=scrollbar.set,
         )
 
-        # ---------------------------------------------------------
+        # ------------------------------------------------------------
         # Status
-        # ---------------------------------------------------------
+        # ------------------------------------------------------------
 
         self.status_label = ttk.Label(
             self,
@@ -303,10 +311,6 @@ class ComparisonTab(ttk.Frame):
             sticky="w",
             pady=(10, 0),
         )
-
-    # -------------------------------------------------------------
-    # Comparison
-    # -------------------------------------------------------------
 
     def _compare(self) -> None:
         """Compare portfolio values and positions."""
@@ -338,212 +342,91 @@ class ComparisonTab(ttk.Frame):
             session = get_session()
 
             try:
-                service = PortfolioComparisonService(
-                    session
-                )
+                service = PortfolioComparisonService(session)
 
                 result = service.compare(
                     first_date=first_date,
                     second_date=second_date,
+                    account_id=None,
                 )
 
             finally:
                 session.close()
 
-            self._display_result(result)
+            self._display_summary(result)
+            self._display_positions(result.positions)
 
-        except Exception as exc:
             self.status_label.configure(
                 text=(
-                    f"Error: {type(exc).__name__}: {exc}"
+                    f"Comparison complete: "
+                    f"{len(result.positions)} position(s)."
                 )
             )
 
-    # -------------------------------------------------------------
-    # Display
-    # -------------------------------------------------------------
+        except Exception as exc:
+            self.status_label.configure(
+                text=f"Error: {type(exc).__name__}: {exc}"
+            )
 
-    def _display_result(self, result) -> None:
-        """Display comparison results."""
-
-        first_value = self._get_value(
-            result,
-            "first_total_value",
-            Decimal("0"),
-        )
-
-        second_value = self._get_value(
-            result,
-            "second_total_value",
-            Decimal("0"),
-        )
-
-        difference = second_value - first_value
+    def _display_summary(self, result) -> None:
+        """Display portfolio values and difference."""
 
         self.first_value_label.configure(
-            text=self._format_currency(first_value)
+            text=self._format_money(result.first_value)
         )
 
         self.second_value_label.configure(
-            text=self._format_currency(second_value)
+            text=self._format_money(result.second_value)
         )
 
-        self.difference_value_label.configure(
-            text=self._format_currency(difference)
+        self.value_difference_label.configure(
+            text=self._format_money(result.value_difference)
         )
 
-        # Clear existing positions.
+    def _display_positions(self, positions) -> None:
+        """Display position quantity differences."""
+
         for item in self.positions_tree.get_children():
             self.positions_tree.delete(item)
 
-        positions = self._get_value(
-            result,
-            "position_differences",
-            [],
-        )
-
-        if isinstance(positions, dict):
-            positions = [
-                {
-                    "symbol": symbol,
-                    "first_quantity": quantities[0],
-                    "second_quantity": quantities[1],
-                    "difference": (
-                        quantities[1] - quantities[0]
-                    ),
-                }
-                for symbol, quantities in positions.items()
-            ]
-
         for position in positions:
-            if isinstance(position, dict):
-                symbol = position.get(
-                    "symbol",
-                    "",
-                )
-
-                first_quantity = position.get(
-                    "first_quantity",
-                    position.get(
-                        "quantity_first",
-                        Decimal("0"),
-                    ),
-                )
-
-                second_quantity = position.get(
-                    "second_quantity",
-                    position.get(
-                        "quantity_second",
-                        Decimal("0"),
-                    ),
-                )
-
-                position_difference = position.get(
-                    "difference",
-                    Decimal(str(second_quantity))
-                    - Decimal(str(first_quantity)),
-                )
-
-            else:
-                symbol = getattr(
-                    position,
-                    "symbol",
-                    "",
-                )
-
-                first_quantity = getattr(
-                    position,
-                    "first_quantity",
-                    getattr(
-                        position,
-                        "quantity_first",
-                        Decimal("0"),
-                    ),
-                )
-
-                second_quantity = getattr(
-                    position,
-                    "second_quantity",
-                    getattr(
-                        position,
-                        "quantity_second",
-                        Decimal("0"),
-                    ),
-                )
-
-                position_difference = getattr(
-                    position,
-                    "difference",
-                    Decimal(str(second_quantity))
-                    - Decimal(str(first_quantity)),
-                )
-
             self.positions_tree.insert(
                 "",
                 "end",
                 values=(
-                    symbol,
+                    position.symbol,
+                    position.company_name,
                     self._format_quantity(
-                        first_quantity
+                        position.first_quantity
                     ),
                     self._format_quantity(
-                        second_quantity
+                        position.second_quantity
                     ),
                     self._format_quantity(
-                        position_difference
+                        position.quantity_difference
                     ),
                 ),
             )
 
-        self.status_label.configure(
-            text=(
-                f"Comparison complete: "
-                f"{len(positions)} position(s)."
-            )
-        )
+    @staticmethod
+    def _format_money(
+        value: Decimal | None,
+    ) -> str:
+        """Format a portfolio value."""
 
-    # -------------------------------------------------------------
-    # Helpers
-    # -------------------------------------------------------------
+        if value is None:
+            return "Not available"
+
+        return f"${value:,.2f}"
 
     @staticmethod
-    def _get_value(
-        result,
-        attribute: str,
-        default,
-    ):
-        """Read a value from an object or dictionary."""
-
-        if isinstance(result, dict):
-            return result.get(
-                attribute,
-                default,
-            )
-
-        return getattr(
-            result,
-            attribute,
-            default,
-        )
-
-    @staticmethod
-    def _format_currency(value) -> str:
-        """Format a value as currency."""
-
-        try:
-            amount = Decimal(str(value))
-        except Exception:
-            amount = Decimal("0")
-
-        return f"${amount:,.2f}"
-
-    @staticmethod
-    def _format_quantity(value) -> str:
+    def _format_quantity(
+        value: Decimal,
+    ) -> str:
         """Format a quantity."""
 
-        try:
-            quantity = Decimal(str(value))
-        except Exception:
-            quantity = Decimal("0")
-
-        return f"{quantity:,.6f}".rstrip("0").rstrip(".")
+        return (
+            f"{Decimal(str(value)):,.6f}"
+            .rstrip("0")
+            .rstrip(".")
+        )

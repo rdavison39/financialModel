@@ -13,16 +13,12 @@ from openpyxl import load_workbook
 
 @dataclass
 class ImportedCash:
-    """Cash imported from a brokerage report."""
-
     currency: str
     amount: Decimal
 
 
 @dataclass
 class ImportedHolding:
-    """Holding imported from a brokerage report."""
-
     symbol: str
     company_name: str
     quantity: Decimal
@@ -33,8 +29,6 @@ class ImportedHolding:
 
 @dataclass
 class ImportedAccount:
-    """Account snapshot imported from a brokerage report."""
-
     account_number: str
     snapshot_date: datetime
     cash: list[ImportedCash]
@@ -42,15 +36,13 @@ class ImportedAccount:
 
 
 class NesbittImporter:
-    """Imports a Nesbitt Burns portfolio report."""
+    """Import a Nesbitt Burns portfolio report."""
 
     def __init__(self, file_path: str | Path) -> None:
-        """Initialize the importer."""
-
         self.file_path = Path(file_path)
 
     def import_file(self) -> ImportedAccount:
-        """Import the Nesbitt Burns Excel report."""
+        """Import the workbook."""
 
         workbook = load_workbook(
             filename=self.file_path,
@@ -60,10 +52,11 @@ class NesbittImporter:
         worksheet = workbook["Holdings"]
 
         account_number, snapshot_date = self._parse_header(
-            worksheet["F1"].value,
+            worksheet["F1"].value
         )
 
         cash = self._parse_cash(worksheet)
+
         holdings = self._parse_holdings(worksheet)
 
         return ImportedAccount(
@@ -72,6 +65,10 @@ class NesbittImporter:
             cash=cash,
             holdings=holdings,
         )
+
+    # -------------------------------------------------------------
+    # Header
+    # -------------------------------------------------------------
 
     def _parse_header(
         self,
@@ -84,27 +81,35 @@ class NesbittImporter:
                 "Nesbitt Burns report header is missing."
             )
 
+        header_text = str(header)
+
         account_match = re.search(
             r"account\s*#\s*(\d+)",
-            str(header),
+            header_text,
             re.IGNORECASE,
         )
 
         if account_match is None:
             raise ValueError(
-                f"Could not parse Nesbitt Burns account number: {header}"
+                "Could not parse Nesbitt Burns account number: "
+                f"{header_text}"
             )
 
         account_number = account_match.group(1)
 
         timestamp_match = re.search(
             r"as of\s+(.+)$",
-            str(header),
+            header_text,
             re.IGNORECASE,
         )
 
-        if timestamp_match and timestamp_match.group(1).strip():
-            timestamp_text = timestamp_match.group(1).strip()
+        if (
+            timestamp_match
+            and timestamp_match.group(1).strip()
+        ):
+            timestamp_text = (
+                timestamp_match.group(1).strip()
+            )
 
             try:
                 snapshot_date = datetime.fromisoformat(
@@ -112,18 +117,28 @@ class NesbittImporter:
                 )
             except ValueError as exc:
                 raise ValueError(
-                    "Could not parse Nesbitt Burns report timestamp: "
-                    f"{timestamp_text}"
+                    "Could not parse Nesbitt Burns "
+                    f"report timestamp: {timestamp_text}"
                 ) from exc
+
         else:
+            # Some cash-only Nesbitt reports do not contain
+            # a timestamp. Use the Excel file's modified time.
             snapshot_date = datetime.fromtimestamp(
                 self.file_path.stat().st_mtime
             )
 
         return account_number, snapshot_date
 
-    def _parse_cash(self, worksheet) -> list[ImportedCash]:
-        """Parse cash balances from the cash details section."""
+    # -------------------------------------------------------------
+    # Cash
+    # -------------------------------------------------------------
+
+    def _parse_cash(
+        self,
+        worksheet,
+    ) -> list[ImportedCash]:
+        """Parse CAD and USD cash balances."""
 
         cash: list[ImportedCash] = []
 
@@ -143,7 +158,10 @@ class NesbittImporter:
 
             currency_text = str(currency).strip()
 
-            if currency_text.startswith("Total"):
+            # Only actual CAD and USD cash balances belong here.
+            # This deliberately excludes rows such as:
+            #   Total (in CAD)
+            if currency_text not in {"CAD", "USD"}:
                 continue
 
             cash.append(
@@ -155,12 +173,22 @@ class NesbittImporter:
 
         return cash
 
-    def _parse_holdings(self, worksheet) -> list[ImportedHolding]:
-        """Parse security holdings from the report."""
+    # -------------------------------------------------------------
+    # Holdings
+    # -------------------------------------------------------------
+
+    def _parse_holdings(
+        self,
+        worksheet,
+    ) -> list[ImportedHolding]:
+        """Parse security holdings."""
 
         holdings: list[ImportedHolding] = []
 
-        for row in range(13, worksheet.max_row + 1):
+        for row in range(
+            13,
+            worksheet.max_row + 1,
+        ):
             symbol = worksheet.cell(
                 row=row,
                 column=1,
@@ -196,31 +224,42 @@ class NesbittImporter:
 
             symbol_text = str(symbol).strip()
 
+            # These are cash rows, not securities.
             if symbol_text in {
                 "CANADIAN DOLLAR",
                 "US DOLLAR",
             }:
                 continue
 
-            if quantity is None or price is None or market_value is None:
+            if (
+                quantity is None
+                or price is None
+                or market_value is None
+            ):
                 continue
+
+            company_name = (
+                str(description).strip()
+                if description is not None
+                else symbol_text
+            )
+
+            currency_text = (
+                str(currency).strip()
+                if currency is not None
+                else "CAD"
+            )
 
             holdings.append(
                 ImportedHolding(
                     symbol=symbol_text,
-                    company_name=(
-                        str(description).strip()
-                        if description is not None
-                        else symbol_text
-                    ),
+                    company_name=company_name,
                     quantity=Decimal(str(quantity)),
                     price=Decimal(str(price)),
-                    market_value=Decimal(str(market_value)),
-                    currency=(
-                        str(currency).strip()
-                        if currency is not None
-                        else "CAD"
+                    market_value=Decimal(
+                        str(market_value)
                     ),
+                    currency=currency_text,
                 )
             )
 
