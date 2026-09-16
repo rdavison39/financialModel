@@ -26,6 +26,12 @@ class PortfolioHolding:
     price: Decimal
     market_value: Decimal
     currency: str
+    average_cost: Decimal | None
+    unrealized_gain: Decimal | None
+    unrealized_gain_percent: Decimal | None
+    daily_change: Decimal | None
+    daily_change_percent: Decimal | None
+    previous_close: Decimal | None
 
 
 @dataclass
@@ -98,6 +104,12 @@ class PortfolioService:
                 price=holding.price,
                 market_value=holding.market_value,
                 currency=holding.currency,
+                average_cost=holding.average_cost,
+                unrealized_gain=holding.unrealized_gain,
+                unrealized_gain_percent=holding.unrealized_gain_percent,
+                daily_change=holding.daily_change,
+                daily_change_percent=holding.daily_change_percent,
+                previous_close=holding.previous_close,
             )
             for holding, company in holding_rows
         ]

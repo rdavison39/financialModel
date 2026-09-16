@@ -1,11 +1,16 @@
 """
 Service for importing brokerage portfolio snapshots.
+
+Historical portfolio data is maintained at one snapshot per account per
+calendar day.  A newer brokerage report for the same day replaces the
+existing daily snapshot.  An identical or older report is skipped.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from src.models.account import Account
@@ -21,7 +26,7 @@ class ImportResult:
     """Result of importing one brokerage snapshot."""
 
     account_number: str
-    snapshot_date: object
+    snapshot_date: datetime
     holdings_imported: int
     cash_imported: int
     duplicate: bool
@@ -40,7 +45,16 @@ class ImportService:
         imported_account,
         file_name: str,
     ) -> ImportResult:
-        """Import one complete brokerage account snapshot."""
+        """
+        Import one complete brokerage account snapshot.
+
+        There is one financial snapshot per account per calendar day.
+
+        - No existing snapshot for the day: create it.
+        - Same source timestamp: skip it.
+        - Older source timestamp: skip it.
+        - Newer source timestamp: replace the existing daily snapshot.
+        """
 
         brokerage = self._get_or_create_brokerage(brokerage_name)
 
@@ -49,28 +63,60 @@ class ImportService:
             account_number=imported_account.account_number,
         )
 
-        existing_import = self.session.scalar(
-            select(ImportRecord).where(
-                ImportRecord.brokerage_id == brokerage.id,
-                ImportRecord.account_id == account.id,
-                ImportRecord.snapshot_date
-                == imported_account.snapshot_date,
-            )
+        incoming_timestamp = imported_account.snapshot_date
+        incoming_day = incoming_timestamp.date()
+
+        existing_imports = list(
+            self.session.scalars(
+                select(ImportRecord)
+                .where(
+                    ImportRecord.brokerage_id == brokerage.id,
+                    ImportRecord.account_id == account.id,
+                )
+                .order_by(
+                    ImportRecord.snapshot_date.desc()
+                )
+            ).all()
         )
 
-        if existing_import is not None:
-            return ImportResult(
-                account_number=imported_account.account_number,
-                snapshot_date=imported_account.snapshot_date,
-                holdings_imported=0,
-                cash_imported=0,
-                duplicate=True,
+        same_day_imports = [
+            item
+            for item in existing_imports
+            if item.snapshot_date.date() == incoming_day
+        ]
+
+        # An identical timestamp is the same source snapshot.  Do not
+        # create duplicate data.
+        if any(
+            item.snapshot_date == incoming_timestamp
+            for item in same_day_imports
+        ):
+            return self._skipped_result(imported_account)
+
+        # If a newer snapshot for this day already exists, the incoming
+        # file must not overwrite the current daily source of truth.
+        if any(
+            item.snapshot_date > incoming_timestamp
+            for item in same_day_imports
+        ):
+            return self._skipped_result(imported_account)
+
+        # A newer snapshot for the same day replaces every existing
+        # snapshot for that day.  This also cleans up any legacy duplicate
+        # ImportRecord rows that may have been created before the daily
+        # upsert rule was introduced.
+        for existing_import in same_day_imports:
+            self._delete_snapshot(
+                account_id=account.id,
+                snapshot_date=existing_import.snapshot_date,
             )
+
+            self.session.delete(existing_import)
 
         import_record = ImportRecord(
             brokerage_id=brokerage.id,
             account_id=account.id,
-            snapshot_date=imported_account.snapshot_date,
+            snapshot_date=incoming_timestamp,
             file_name=file_name,
         )
 
@@ -87,12 +133,20 @@ class ImportService:
             holding = HoldingSnapshot(
                 account_id=account.id,
                 company_id=company.id,
-                snapshot_date=imported_account.snapshot_date,
+                snapshot_date=incoming_timestamp,
                 quantity=imported_holding.quantity,
                 average_cost=imported_holding.average_cost,
                 price=imported_holding.price,
                 market_value=imported_holding.market_value,
                 unrealized_gain=imported_holding.unrealized_gain,
+                unrealized_gain_percent=(
+                    imported_holding.unrealized_gain_percent
+                ),
+                daily_change=imported_holding.daily_change,
+                daily_change_percent=(
+                    imported_holding.daily_change_percent
+                ),
+                previous_close=imported_holding.previous_close,
                 currency=imported_holding.currency,
             )
 
@@ -104,7 +158,7 @@ class ImportService:
         for imported_cash in imported_account.cash:
             cash = CashSnapshot(
                 account_id=account.id,
-                snapshot_date=imported_account.snapshot_date,
+                snapshot_date=incoming_timestamp,
                 currency=imported_cash.currency,
                 amount=imported_cash.amount,
             )
@@ -116,10 +170,42 @@ class ImportService:
 
         return ImportResult(
             account_number=imported_account.account_number,
-            snapshot_date=imported_account.snapshot_date,
+            snapshot_date=incoming_timestamp,
             holdings_imported=holdings_imported,
             cash_imported=cash_imported,
             duplicate=False,
+        )
+
+    @staticmethod
+    def _skipped_result(imported_account) -> ImportResult:
+        """Return the standard result for an ignored source snapshot."""
+        return ImportResult(
+            account_number=imported_account.account_number,
+            snapshot_date=imported_account.snapshot_date,
+            holdings_imported=0,
+            cash_imported=0,
+            duplicate=True,
+        )
+
+    def _delete_snapshot(
+        self,
+        account_id: int,
+        snapshot_date: datetime,
+    ) -> None:
+        """Delete imported holdings and cash for one source timestamp."""
+
+        self.session.execute(
+            delete(HoldingSnapshot).where(
+                HoldingSnapshot.account_id == account_id,
+                HoldingSnapshot.snapshot_date == snapshot_date,
+            )
+        )
+
+        self.session.execute(
+            delete(CashSnapshot).where(
+                CashSnapshot.account_id == account_id,
+                CashSnapshot.snapshot_date == snapshot_date,
+            )
         )
 
     def _get_or_create_brokerage(

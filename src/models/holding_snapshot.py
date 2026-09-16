@@ -48,14 +48,34 @@ class HoldingSnapshot(Base):
         nullable=False,
     )
 
+    market_value: Mapped[Decimal] = mapped_column(
+        Numeric(20, 2),
+        nullable=False,
+    )
+
     unrealized_gain: Mapped[Decimal] = mapped_column(
         Numeric(20, 6),
         nullable=False,
     )
 
-    market_value: Mapped[Decimal] = mapped_column(
-        Numeric(20, 2),
-        nullable=False,
+    unrealized_gain_percent: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 6),
+        nullable=True,
+    )
+
+    daily_change: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 6),
+        nullable=True,
+    )
+
+    daily_change_percent: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 6),
+        nullable=True,
+    )
+
+    previous_close: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 6),
+        nullable=True,
     )
 
     currency: Mapped[str] = mapped_column(

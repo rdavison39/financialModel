@@ -7,7 +7,7 @@ snapshot timestamp, cash balances, and security holdings.
 
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 import re
 
@@ -59,32 +59,6 @@ class BMOImporter:
         """Initialize the importer."""
         self.file_path = Path(file_path)
 
-    @staticmethod
-    def _decimal_or_zero(value: object) -> Decimal:
-        """Convert a numeric spreadsheet value to Decimal.
-
-        Brokerage exports can contain text placeholders in optional
-        numeric columns. Treat blank/non-numeric optional values as zero.
-        """
-        if value is None:
-            return Decimal("0")
-
-        if isinstance(value, Decimal):
-            return value
-
-        if isinstance(value, (int, float)):
-            return Decimal(str(value))
-
-        text = str(value).strip()
-
-        if not text:
-            return Decimal("0")
-
-        try:
-            return Decimal(text.replace(",", "").replace("$", "").strip())
-        except InvalidOperation:
-            return Decimal("0")
-
     def import_file(self) -> ImportedAccount:
         """Read the BMO Excel file and return its imported data."""
         workbook = load_workbook(
@@ -94,7 +68,8 @@ class BMOImporter:
 
         if self.SHEET_NAME not in workbook.sheetnames:
             raise ValueError(
-                f"Expected worksheet '{self.SHEET_NAME}' was not found."
+                f"Expected worksheet '{self.SHEET_NAME}' "
+                f"was not found."
             )
 
         worksheet = workbook[self.SHEET_NAME]
@@ -154,14 +129,47 @@ class BMOImporter:
             if currency is None or amount is None:
                 continue
 
+            currency_text = str(currency).strip()
+
+            # BMO includes a summary row such as "Total (in CAD)".
+            # Only actual CAD and USD cash balances are imported.
+            if currency_text not in {"CAD", "USD"}:
+                continue
+
             cash.append(
                 ImportedCash(
-                    currency=str(currency),
+                    currency=currency_text,
                     amount=Decimal(str(amount)),
                 )
             )
 
         return cash
+
+    @staticmethod
+    def _parse_numeric_value(value: object) -> Decimal:
+        """Parse a numeric value from an Excel cell.
+
+        BMO sometimes returns values such as "65.39 C" or "13.27 U"
+        for previous close, where the trailing letter identifies the
+        currency. Only the numeric portion belongs in the database.
+        """
+        if value is None:
+            return Decimal("0")
+
+        if isinstance(value, (int, float, Decimal)):
+            return Decimal(str(value))
+
+        match = re.search(
+            r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)",
+            str(value),
+        )
+
+        if match is None:
+            raise ValueError(
+                f"Could not parse numeric value: {value!r}"
+            )
+
+        return Decimal(match.group(0))
 
     def _read_holdings(self, worksheet) -> list[ImportedHolding]:
         """Read security holdings from the Holding Details section."""
@@ -193,18 +201,20 @@ class BMOImporter:
                     symbol=str(symbol),
                     company_name=str(company_name or ""),
                     quantity=Decimal(str(quantity)),
-                    average_cost=self._decimal_or_zero(average_cost),
-                    price=self._decimal_or_zero(price),
+                    average_cost=Decimal(str(average_cost or 0)),
+                    price=Decimal(str(price or 0)),
                     market_value=Decimal(str(market_value)),
-                    unrealized_gain=self._decimal_or_zero(unrealized_gain),
-                    unrealized_gain_percent=self._decimal_or_zero(
-                        unrealized_gain_percent
+                    unrealized_gain=Decimal(str(unrealized_gain or 0)),
+                    unrealized_gain_percent=Decimal(
+                        str(unrealized_gain_percent or 0)
                     ),
-                    daily_change=self._decimal_or_zero(daily_change),
-                    daily_change_percent=self._decimal_or_zero(
-                        daily_change_percent
+                    daily_change=Decimal(str(daily_change or 0)),
+                    daily_change_percent=Decimal(
+                        str(daily_change_percent or 0)
                     ),
-                    previous_close=self._decimal_or_zero(previous_close),
+                    previous_close=self._parse_numeric_value(
+                        previous_close
+                    ),
                     currency=str(currency or "CAD"),
                 )
             )

@@ -242,13 +242,20 @@ class PortfolioValuationService:
 
             if market_price.is_current:
                 current_price = market_price.price
-                price_change = market_price.change
             else:
                 current_price = holding.price
-                price_change = Decimal("0")
+
+            # Brokerage daily change is authoritative. Yahoo remains
+            # the fallback for historical records that predate the
+            # brokerage daily-change fields.
+            if holding.daily_change is not None:
+                change = holding.quantity * holding.daily_change
+            elif market_price.is_current:
+                change = holding.quantity * market_price.change
+            else:
+                change = Decimal("0")
 
             value = holding.quantity * current_price
-            change = holding.quantity * price_change
 
             if holding.currency == "CAD":
                 total_value += value
