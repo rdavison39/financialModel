@@ -18,6 +18,7 @@ class BulkImportResult:
 
     files_found: int
     imported: int
+    replaced: int
     duplicates: int
     errors: int
     error_files: list[str]
@@ -36,7 +37,6 @@ class BulkImportService:
         directory: str | Path,
     ) -> BulkImportResult:
         """Import all BMO Excel files in a directory."""
-
         return self._import_directory(
             directory=directory,
             brokerage_name="BMO",
@@ -48,7 +48,6 @@ class BulkImportService:
         directory: str | Path,
     ) -> BulkImportResult:
         """Import all Nesbitt Burns Excel files in a directory."""
-
         return self._import_directory(
             directory=directory,
             brokerage_name="Nesbitt Burns",
@@ -62,7 +61,6 @@ class BulkImportService:
         importer_class,
     ) -> BulkImportResult:
         """Import all Excel files from a directory."""
-
         directory_path = Path(directory)
 
         if not directory_path.exists():
@@ -83,6 +81,7 @@ class BulkImportService:
         )
 
         imported = 0
+        replaced = 0
         duplicates = 0
         errors = 0
         error_files: list[str] = []
@@ -101,12 +100,13 @@ class BulkImportService:
 
                 if result.duplicate:
                     duplicates += 1
+                elif result.replaced:
+                    replaced += 1
                 else:
                     imported += 1
 
             except Exception as exc:
                 self.session.rollback()
-
                 errors += 1
                 error_files.append(
                     f"{file_path.name}: {type(exc).__name__}: {exc}"
@@ -115,6 +115,7 @@ class BulkImportService:
         return BulkImportResult(
             files_found=len(files),
             imported=imported,
+            replaced=replaced,
             duplicates=duplicates,
             errors=errors,
             error_files=error_files,

@@ -5,6 +5,7 @@ Main application window for the Financial Model GUI.
 import tkinter as tk
 from tkinter import ttk
 
+from src.gui.accounts_tab import AccountsTab
 from src.gui.comparison_tab import ComparisonTab
 from src.gui.graphs_tab import GraphsTab
 from src.gui.import_tab import ImportTab
@@ -51,10 +52,6 @@ class FinancialModelApp(tk.Tk):
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
 
-        # ---------------------------------------------------------
-        # Navigation
-        # ---------------------------------------------------------
-
         navigation = ttk.Frame(
             self,
             padding=10,
@@ -96,6 +93,16 @@ class FinancialModelApp(tk.Tk):
 
         ttk.Button(
             navigation,
+            text="Accounts",
+            style="Navigation.TButton",
+            command=self.show_accounts,
+        ).pack(
+            fill="x",
+            pady=3,
+        )
+
+        ttk.Button(
+            navigation,
             text="Graphs",
             style="Navigation.TButton",
             command=self.show_graphs,
@@ -113,10 +120,6 @@ class FinancialModelApp(tk.Tk):
             fill="x",
             pady=3,
         )
-
-        # ---------------------------------------------------------
-        # Content area
-        # ---------------------------------------------------------
 
         self.content = ttk.Frame(
             self,
@@ -139,41 +142,20 @@ class FinancialModelApp(tk.Tk):
             weight=1,
         )
 
-        # ---------------------------------------------------------
-        # Pages
-        # ---------------------------------------------------------
-
-        self.import_page = ImportTab(
-            self.content
-        )
-
-        self.portfolio_page = PortfolioTab(
-            self.content
-        )
-
-        self.graphs_page = GraphsTab(
-            self.content
-        )
-
-        self.comparison_page = ComparisonTab(
-            self.content
-        )
-
-        # ---------------------------------------------------------
-        # Start on Import
-        # ---------------------------------------------------------
+        self.import_page = ImportTab(self.content)
+        self.portfolio_page = PortfolioTab(self.content)
+        self.accounts_page = AccountsTab(self.content)
+        self.graphs_page = GraphsTab(self.content)
+        self.comparison_page = ComparisonTab(self.content)
 
         self.show_import()
-
-    # -------------------------------------------------------------
-    # Page management
-    # -------------------------------------------------------------
 
     def _hide_pages(self) -> None:
         """Hide all pages."""
 
         self.import_page.grid_remove()
         self.portfolio_page.grid_remove()
+        self.accounts_page.grid_remove()
         self.graphs_page.grid_remove()
         self.comparison_page.grid_remove()
 
@@ -191,37 +173,30 @@ class FinancialModelApp(tk.Tk):
             sticky="nsew",
         )
 
-    # -------------------------------------------------------------
-    # Navigation
-    # -------------------------------------------------------------
-
     def show_import(self) -> None:
         """Show the Import page."""
 
-        self._show_page(
-            self.import_page
-        )
+        self._show_page(self.import_page)
 
     def show_portfolio(self) -> None:
         """Show the Portfolio page."""
 
-        self._show_page(
-            self.portfolio_page
-        )
+        self._show_page(self.portfolio_page)
+
+    def show_accounts(self) -> None:
+        """Show the Accounts page."""
+
+        self._show_page(self.accounts_page)
 
     def show_graphs(self) -> None:
         """Show the Graphs page."""
 
-        self._show_page(
-            self.graphs_page
-        )
+        self._show_page(self.graphs_page)
 
     def show_comparison(self) -> None:
         """Show the Comparison page."""
 
-        self._show_page(
-            self.comparison_page
-        )
+        self._show_page(self.comparison_page)
 
 
 def main() -> None:
