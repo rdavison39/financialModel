@@ -5,7 +5,7 @@ Portfolio tab for the Financial Model GUI.
 import tkinter as tk
 from datetime import date, timedelta
 from decimal import Decimal
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 from sqlalchemy import select, func
 
@@ -27,13 +27,6 @@ class PortfolioTab(ttk.Frame):
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(3, weight=1)
-
-        # Values calculated by the most recent portfolio update.
-        self._last_total_change: Decimal | None = None
-        self._last_total_change_percent: Decimal | None = None
-        self._last_account_changes: dict[int, tuple[Decimal, Decimal]] = {}
-        self._last_brokerage_changes: dict[int, tuple[Decimal, Decimal]] = {}
-        self._last_tsx_change: Decimal | None = None
 
         self._build_ui()
 
@@ -106,21 +99,33 @@ class PortfolioTab(ttk.Frame):
 
         progress_frame.columnconfigure(0, weight=1)
 
-        self.progress_bar = ttk.Progressbar(
-            progress_frame, orient="horizontal", mode="determinate", maximum=100
+        self.progress_text = tk.Text(
+            progress_frame,
+            height=8,
+            wrap="none",
+            font=("Consolas", 10),
         )
-        self.progress_bar.grid(row=0, column=0, sticky="ew", padx=(0, 10))
 
-        self.progress_percent_label = ttk.Label(
-            progress_frame, text="0%", width=5, anchor="e"
+        self.progress_text.grid(
+            row=0,
+            column=0,
+            sticky="ew",
         )
-        self.progress_percent_label.grid(row=0, column=1, sticky="e")
 
-        self.progress_status_label = ttk.Label(
-            progress_frame, text="Ready."
+        progress_scrollbar = ttk.Scrollbar(
+            progress_frame,
+            orient="vertical",
+            command=self.progress_text.yview,
         )
-        self.progress_status_label.grid(
-            row=1, column=0, columnspan=2, sticky="w", pady=(6, 0)
+
+        progress_scrollbar.grid(
+            row=0,
+            column=1,
+            sticky="ns",
+        )
+
+        self.progress_text.configure(
+            yscrollcommand=progress_scrollbar.set,
         )
 
         # ---------------------------------------------------------
@@ -225,6 +230,7 @@ class PortfolioTab(ttk.Frame):
                 "brokerage",
                 "value",
                 "today",
+                "tsx",
             ),
             show="headings",
             height=3,
@@ -245,6 +251,10 @@ class PortfolioTab(ttk.Frame):
             text="Today",
         )
 
+        self.brokerage_tree.heading(
+            "tsx",
+            text="TSX",
+        )
 
         self.brokerage_tree.column(
             "brokerage",
@@ -269,6 +279,13 @@ class PortfolioTab(ttk.Frame):
             stretch=True,
         )
 
+        self.brokerage_tree.column(
+            "tsx",
+            width=100,
+            minwidth=90,
+            anchor="e",
+            stretch=False,
+        )
 
         self.brokerage_tree.grid(
             row=0,
@@ -319,6 +336,7 @@ class PortfolioTab(ttk.Frame):
                 "name",
                 "value",
                 "today",
+                "tsx",
                 "roi",
             ),
             show="headings",
@@ -350,6 +368,10 @@ class PortfolioTab(ttk.Frame):
             text="Today",
         )
 
+        self.accounts_tree.heading(
+            "tsx",
+            text="TSX",
+        )
 
         self.accounts_tree.heading(
             "roi",
@@ -395,6 +417,13 @@ class PortfolioTab(ttk.Frame):
             stretch=True,
         )
 
+        self.accounts_tree.column(
+            "tsx",
+            width=85,
+            minwidth=75,
+            anchor="e",
+            stretch=False,
+        )
 
         self.accounts_tree.column(
             "roi",
@@ -409,6 +438,20 @@ class PortfolioTab(ttk.Frame):
             column=0,
             sticky="nsew",
         )
+
+        account_actions = ttk.Frame(accounts_frame)
+        account_actions.grid(
+            row=1,
+            column=0,
+            sticky="w",
+            pady=(8, 0),
+        )
+
+        ttk.Button(
+            account_actions,
+            text="Change Account Name",
+            command=self._change_account_name,
+        ).pack(side="left")
 
         accounts_scrollbar = ttk.Scrollbar(
             accounts_frame,
@@ -433,10 +476,19 @@ class PortfolioTab(ttk.Frame):
     def _update_portfolio(self) -> None:
         """Update all account and consolidated portfolio values."""
 
-        self.status_label.configure(text="Updating...")
-        self.progress_bar.configure(maximum=100, value=0)
-        self.progress_percent_label.configure(text="0%")
-        self.progress_status_label.configure(text="Preparing price lookups...")
+        self.status_label.configure(
+            text="Updating..."
+        )
+
+        self.progress_text.delete(
+            "1.0",
+            "end",
+        )
+
+        self._write_progress(
+            "Starting portfolio update..."
+        )
+
         self.update_idletasks()
 
         try:
@@ -446,60 +498,18 @@ class PortfolioTab(ttk.Frame):
 
             try:
                 service = PortfolioValuationService(
-                    session,
-                    progress_callback=self._update_progress,
+                    session
                 )
 
                 total_value = service.update_all_accounts()
 
                 # Capture the values calculated by the valuation
-                # service while they are still available. These are
-                # especially important on the first valuation day,
-                # when there is no previous PortfolioSnapshot yet.
-                self._last_total_change = getattr(
-                    service,
-                    "total_daily_change",
-                    None,
-                )
-                self._last_total_change_percent = getattr(
-                    service,
-                    "total_daily_change_percent",
-                    None,
-                )
-                self._last_account_changes = {
-                    account_id: (
-                        change,
-                        getattr(
-                            service,
-                            "account_daily_change_percents",
-                        ).get(account_id, Decimal("0")),
-                    )
-                    for account_id, change in getattr(
-                        service,
-                        "account_daily_changes",
-                        {},
-                    ).items()
-                }
-                self._last_brokerage_changes = {
-                    brokerage_id: (
-                        change,
-                        getattr(
-                            service,
-                            "brokerage_daily_change_percents",
-                        ).get(brokerage_id, Decimal("0")),
-                    )
-                    for brokerage_id, change in getattr(
-                        service,
-                        "brokerage_daily_changes",
-                        {},
-                    ).items()
-                }
+                # service while they are still available.
                 tsx_change = getattr(
                     service,
                     "tsx_daily_change_percent",
                     None,
                 )
-                self._last_tsx_change = tsx_change
 
             finally:
                 session.close()
@@ -515,23 +525,42 @@ class PortfolioTab(ttk.Frame):
                 )
             )
 
-            self.progress_bar.configure(
-                maximum=max(int(float(self.progress_bar["maximum"])), 1),
-                value=self.progress_bar["maximum"],
+            self._write_progress(
+                ""
             )
-            self.progress_percent_label.configure(text="100%")
-            self.progress_status_label.configure(text="Update complete.")
-            self.update_idletasks()
+
+            self._write_progress(
+                f"TOTAL PORTFOLIO: "
+                f"{self._format_currency(total_value)}"
+            )
+
+            total_change, total_percent = (
+                self._calculate_daily_change(
+                    None
+                )
+            )
+
+            if total_change is not None:
+                self._write_progress(
+                    f"TODAY: "
+                    f"{self._format_signed_currency(total_change)} "
+                    f"({self._format_percent(total_percent)})"
+                )
+
+            if tsx_change is not None:
+                self._write_progress(
+                    f"TSX: "
+                    f"{self._format_percent(tsx_change)}"
+                )
 
         except Exception as exc:
             self.status_label.configure(
                 text="Update failed."
             )
 
-            self.progress_status_label.configure(
-                text=f"Update failed: {type(exc).__name__}"
+            self._write_progress(
+                f"ERROR: {type(exc).__name__}: {exc}"
             )
-            self.update_idletasks()
 
             messagebox.showerror(
                 "Portfolio Update Error",
@@ -607,9 +636,6 @@ class PortfolioTab(ttk.Frame):
                 # -------------------------------------------------
                 # TSX
                 # -------------------------------------------------
-
-                if tsx_change is None:
-                    tsx_change = self._last_tsx_change
 
                 if tsx_change is not None:
                     self.tsx_label.configure(
@@ -715,15 +741,24 @@ class PortfolioTab(ttk.Frame):
                     f"({self._format_percent(change_percent)})"
                 )
 
+            if tsx_change is None:
+                tsx_text = "--"
+            else:
+                tsx_text = self._format_percent(
+                    tsx_change
+                )
+
             self.accounts_tree.insert(
                 "",
                 "end",
+                iid=str(account.id),
                 values=(
                     brokerage_name,
                     account.account_number,
                     account.name,
                     self._format_currency(value),
                     today_text,
+                    tsx_text,
                     self._format_percent(roi),
                 ),
             )
@@ -795,12 +830,8 @@ class PortfolioTab(ttk.Frame):
             )
 
             if previous_value is None:
-                cached = self._last_brokerage_changes.get(brokerage_id)
-                if cached is None:
-                    change = None
-                    change_percent = None
-                else:
-                    change, change_percent = cached
+                change = None
+                change_percent = None
             else:
                 current_value = Decimal(
                     str(value or 0)
@@ -832,6 +863,13 @@ class PortfolioTab(ttk.Frame):
                     f"({self._format_percent(change_percent)})"
                 )
 
+            if tsx_change is None:
+                tsx_text = "--"
+            else:
+                tsx_text = self._format_percent(
+                    tsx_change
+                )
+
             self.brokerage_tree.insert(
                 "",
                 "end",
@@ -839,8 +877,92 @@ class PortfolioTab(ttk.Frame):
                     brokerage_name,
                     self._format_currency(value),
                     today_text,
+                    tsx_text,
                 ),
             )
+
+    # =============================================================
+    # Account name
+    # =============================================================
+
+    def _change_account_name(self) -> None:
+        """Change and persist the friendly name of the selected account."""
+        selected = self.accounts_tree.selection()
+
+        if not selected:
+            messagebox.showinfo(
+                "Change Account Name",
+                "Select an account first.",
+            )
+            return
+
+        account_id = int(selected[0])
+        values = self.accounts_tree.item(selected[0], "values")
+
+        if len(values) < 3:
+            return
+
+        account_number = str(values[1])
+        current_name = str(values[2])
+
+        new_name = simpledialog.askstring(
+            "Change Account Name",
+            f"Account {account_number}:",
+            initialvalue=current_name,
+            parent=self,
+        )
+
+        if new_name is None:
+            return
+
+        new_name = new_name.strip()
+
+        if not new_name:
+            messagebox.showwarning(
+                "Change Account Name",
+                "The account name cannot be blank.",
+            )
+            return
+
+        session = None
+
+        try:
+            initialize_database()
+            session = get_session()
+
+            account = session.scalar(
+                select(Account).where(Account.id == account_id)
+            )
+
+            if account is None:
+                raise ValueError(
+                    f"Account ID {account_id} was not found."
+                )
+
+            account.name = new_name
+            session.commit()
+
+            updated_values = list(values)
+            updated_values[2] = new_name
+
+            self.accounts_tree.item(
+                selected[0],
+                values=updated_values,
+            )
+
+        except Exception as exc:
+            if session is not None:
+                session.rollback()
+
+            messagebox.showerror(
+                "Change Account Name",
+                f"Unable to save account name:\n\n"
+                f"{type(exc).__name__}: {exc}",
+            )
+
+        finally:
+            if session is not None:
+                session.close()
 
     # =============================================================
     # Daily change
@@ -895,19 +1017,6 @@ class PortfolioTab(ttk.Frame):
             )
 
             if previous is None:
-                # On the first valuation day there is no previous
-                # PortfolioSnapshot. Use the market-price change
-                # calculated during the update instead.
-                if account_id is None:
-                    if self._last_total_change is not None:
-                        return (
-                            self._last_total_change,
-                            self._last_total_change_percent,
-                        )
-                else:
-                    cached = self._last_account_changes.get(account_id)
-                    if cached is not None:
-                        return cached
                 return None, None
 
             current_value = Decimal(
@@ -994,14 +1103,21 @@ class PortfolioTab(ttk.Frame):
     # Progress
     # =============================================================
 
-    def _update_progress(self, current: int, total: int, symbol: str) -> None:
-        """Update the price lookup progress display."""
-        percent = 100 if total <= 0 else (current / total) * 100
-        self.progress_bar.configure(maximum=total if total > 0 else 1, value=current)
-        self.progress_percent_label.configure(text=f"{percent:.0f}%")
-        self.progress_status_label.configure(
-            text=f"Looking up {current} of {total}: {symbol}"
+    def _write_progress(
+        self,
+        message: str,
+    ) -> None:
+        """Write a message to the progress window."""
+
+        self.progress_text.insert(
+            "end",
+            message + "\n",
         )
+
+        self.progress_text.see(
+            "end"
+        )
+
         self.update_idletasks()
 
     # =============================================================

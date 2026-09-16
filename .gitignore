@@ -232,3 +232,7 @@ reports/
 # coverage.xml
 
 # *.pdf
+# Local SQLite database
+database/financial_model.db
+database/financial_model.db-shm
+database/financial_model.db-wal
