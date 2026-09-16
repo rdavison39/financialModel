@@ -20,18 +20,24 @@ from src.models.import_record import ImportRecord
 class PortfolioHolding:
     """A holding from an account snapshot."""
 
+    snapshot_id: int
     symbol: str
     company_name: str
     quantity: Decimal
     price: Decimal
     market_value: Decimal
-    currency: str
-    average_cost: Decimal | None
-    unrealized_gain: Decimal | None
+    average_cost: Decimal
+    unrealized_gain: Decimal
     unrealized_gain_percent: Decimal | None
     daily_change: Decimal | None
     daily_change_percent: Decimal | None
     previous_close: Decimal | None
+    current_price: Decimal | None
+    current_market_value: Decimal | None
+    current_previous_close: Decimal | None
+    current_daily_change: Decimal | None
+    current_daily_change_percent: Decimal | None
+    currency: str
 
 
 @dataclass
@@ -98,18 +104,24 @@ class PortfolioService:
 
         holdings = [
             PortfolioHolding(
+                snapshot_id=holding.id,
                 symbol=company.symbol,
                 company_name=company.name,
                 quantity=holding.quantity,
                 price=holding.price,
                 market_value=holding.market_value,
-                currency=holding.currency,
                 average_cost=holding.average_cost,
                 unrealized_gain=holding.unrealized_gain,
                 unrealized_gain_percent=holding.unrealized_gain_percent,
                 daily_change=holding.daily_change,
                 daily_change_percent=holding.daily_change_percent,
                 previous_close=holding.previous_close,
+                current_price=holding.current_price,
+                current_market_value=holding.current_market_value,
+                current_previous_close=holding.current_previous_close,
+                current_daily_change=holding.current_daily_change,
+                current_daily_change_percent=holding.current_daily_change_percent,
+                currency=holding.currency,
             )
             for holding, company in holding_rows
         ]

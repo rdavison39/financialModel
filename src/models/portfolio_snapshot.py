@@ -32,3 +32,11 @@ class PortfolioSnapshot(Base):
         Numeric(20, 2),
         nullable=False,
     )
+
+    daily_change: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 6), nullable=True,
+    )
+
+    daily_change_percent: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 6), nullable=True,
+    )

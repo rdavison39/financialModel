@@ -9,6 +9,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.models.holding_snapshot import HoldingSnapshot
 from src.models.portfolio_snapshot import PortfolioSnapshot
 from src.services.market_price_service import MarketPrice, MarketPriceService
 from src.services.portfolio_service import PortfolioService
@@ -68,6 +69,7 @@ class PortfolioValuationService:
             account_id=account_id,
             snapshot_date=date.today(),
             total_value=total_value,
+            daily_change=daily_change,
         )
 
         self.account_daily_changes[account_id] = daily_change
@@ -145,6 +147,7 @@ class PortfolioValuationService:
                 account_id=account_id,
                 snapshot_date=date.today(),
                 total_value=total_value,
+                daily_change=daily_change,
             )
 
         self.total_daily_change = consolidated_daily_change
@@ -193,6 +196,7 @@ class PortfolioValuationService:
             account_id=None,
             snapshot_date=date.today(),
             total_value=consolidated_value,
+            daily_change=consolidated_daily_change,
         )
 
         return consolidated_value
@@ -226,7 +230,7 @@ class PortfolioValuationService:
         return price
 
     def _calculate_portfolio_value(self, portfolio) -> tuple[Decimal, Decimal]:
-        """Calculate current value and today's market change."""
+        """Calculate live value and today's change using Yahoo Finance."""
         usd_to_cad = self._price_cache["CAD=X"]
 
         if not usd_to_cad.is_current:
@@ -242,48 +246,59 @@ class PortfolioValuationService:
 
             if market_price.is_current:
                 current_price = market_price.price
+                security_change = holding.quantity * market_price.change
+                yahoo_previous_close = market_price.previous_close
+                yahoo_change_percent = market_price.change_percent
             else:
                 current_price = holding.price
-
-            # Brokerage daily change is authoritative. Yahoo remains
-            # the fallback for historical records that predate the
-            # brokerage daily-change fields.
-            if holding.daily_change is not None:
-                change = holding.quantity * holding.daily_change
-            elif market_price.is_current:
-                change = holding.quantity * market_price.change
-            else:
-                change = Decimal("0")
+                security_change = Decimal("0")
+                yahoo_previous_close = Decimal("0")
+                yahoo_change_percent = Decimal("0")
 
             value = holding.quantity * current_price
 
             if holding.currency == "CAD":
-                total_value += value
-                daily_change += change
-
+                value_cad = value
+                change_cad = security_change
+                previous_close_cad = (
+                    holding.quantity * yahoo_previous_close
+                )
             elif holding.currency == "USD" or holding.symbol.endswith(":US"):
-                total_value += value * usd_to_cad.price
-                daily_change += change * usd_to_cad.price
-
+                value_cad = value * usd_to_cad.price
+                change_cad = security_change * usd_to_cad.price
+                previous_close_cad = (
+                    holding.quantity
+                    * yahoo_previous_close
+                    * usd_to_cad.price
+                )
             else:
                 raise ValueError(
                     f"Unsupported holding currency: {holding.currency}"
                 )
 
-        # Cash has no security-price movement, but USD cash changes in
-        # CAD value when the exchange rate moves.
+            total_value += value_cad
+            daily_change += change_cad
+
+            # Persist live Yahoo values on the historical holding snapshot.
+            # These fields are separate from the brokerage-reported fields.
+            snapshot = self.session.get(
+                HoldingSnapshot,
+                holding.snapshot_id,
+            )
+            if snapshot is not None:
+                snapshot.current_price = current_price
+                snapshot.current_market_value = value_cad
+                snapshot.current_previous_close = yahoo_previous_close
+                snapshot.current_daily_change = change_cad
+                snapshot.current_daily_change_percent = yahoo_change_percent
+
         for cash in portfolio.cash:
             if cash.currency == "CAD":
                 total_value += cash.amount
-
             elif cash.currency == "USD":
                 total_value += cash.amount * usd_to_cad.price
-
                 if usd_to_cad.is_current:
-                    daily_change += (
-                        cash.amount * usd_to_cad.change
-                    )
-
+                    daily_change += cash.amount * usd_to_cad.change
             else:
                 raise ValueError(
                     f"Unsupported cash currency: {cash.currency}"
@@ -323,8 +338,9 @@ class PortfolioValuationService:
         account_id: int | None,
         snapshot_date: date,
         total_value: Decimal,
+        daily_change: Decimal,
     ) -> None:
-        """Insert or replace a daily portfolio snapshot."""
+        """Insert or replace a live Yahoo portfolio snapshot."""
         snapshot = self.session.scalar(
             select(PortfolioSnapshot).where(
                 PortfolioSnapshot.account_id == account_id,
@@ -332,14 +348,24 @@ class PortfolioValuationService:
             )
         )
 
+        daily_change_percent = self._daily_change_percent(
+            total_value,
+            daily_change,
+        )
+
         if snapshot is None:
             snapshot = PortfolioSnapshot(
                 account_id=account_id,
                 snapshot_date=snapshot_date,
                 total_value=total_value,
+                daily_change=daily_change,
+                daily_change_percent=daily_change_percent,
             )
             self.session.add(snapshot)
         else:
             snapshot.total_value = total_value
+            snapshot.daily_change = daily_change
+            snapshot.daily_change_percent = daily_change_percent
 
         self.session.commit()
+

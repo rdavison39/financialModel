@@ -78,6 +78,26 @@ class HoldingSnapshot(Base):
         nullable=True,
     )
 
+    current_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 6), nullable=True,
+    )
+
+    current_market_value: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 2), nullable=True,
+    )
+
+    current_previous_close: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 6), nullable=True,
+    )
+
+    current_daily_change: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 6), nullable=True,
+    )
+
+    current_daily_change_percent: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 6), nullable=True,
+    )
+
     currency: Mapped[str] = mapped_column(
         String(3),
         nullable=False,
