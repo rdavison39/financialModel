@@ -1,356 +1,40 @@
 # Davison Financial Model
 
-# PROJECT_STATE.md
+# Project State
 
-**Version:** 0.2.1 (Phase 2 Active)
+**Version:** 0.3.0
 
-**Last Updated:** June 29, 2026
+**Phase:** 2
+
+**Last Updated:** September 15, 2026
 
 ---
 
 # Current Status
 
-## Current Phase
+The project foundation and initial portfolio functionality are
+implemented.
 
-**Phase 2**
+The application can:
 
-## Current Milestone
-
-Implement the **ImportService**.
-
-The importer infrastructure is complete and fully tested.
-
-The current objective is to persist imported brokerage data into the
-database while maintaining the project's layered architecture.
-
----
-
-# Build Status
-
-## Python
-
-3.13
-
-## Test Status
-
-```
-107 tests passed
-0 failures
-0 warnings
-```
-
-This was the documented status at the end of Phase 1. Re-run the test
-suite after each Phase 2 change.
+* Import BMO brokerage snapshots.
+* Import Nesbitt Burns brokerage snapshots.
+* Store historical holdings.
+* Store historical cash.
+* Prevent duplicate imports.
+* Retrieve the latest portfolio.
+* Retrieve current market prices.
+* Calculate current account values.
+* Calculate consolidated portfolio value.
+* Store daily portfolio valuations.
+* Retrieve historical portfolio values.
+* Compare security quantities between dates.
 
 ---
 
-# Completed Components
+# Current Database
 
-## Database Layer
+The current database is:
 
-Completed.
-
-Models:
-
-* Brokerage
-* Account
-* Company
-* Import
-* HoldingSnapshot
-* CashBalanceSnapshot
-* MarketPrice
-
----
-
-## Repository Layer
-
-Completed.
-
-Repositories:
-
-* BrokerageRepository
-* AccountRepository
-* CompanyRepository
-* ImportRepository
-* HoldingSnapshotRepository
-* CashBalanceSnapshotRepository
-* MarketPriceRepository
-
-Repository responsibilities are limited to persistence.
-
-Business logic is intentionally excluded.
-
----
-
-## Import Infrastructure
-
-Completed.
-
-Components:
-
-* ExcelReader
-* WorksheetHelper
-* BMOLayout
-* BMOInvestorLineImporter
-
-The importer successfully reads a BMO InvestorLine holdings export and produces DTO objects.
-
-The importer has no dependency on SQLAlchemy or the database.
-
----
-
-## DTO Layer
-
-Completed.
-
-DTOs:
-
-* ImportedAccount
-* ImportedCash
-* ImportedPosition
-
-DTOs provide the contract between the importer layer and the service layer.
-
----
-
-## Test Infrastructure
-
-Completed.
-
-Current testing includes:
-
-* Repository tests
-* Importer tests
-* Model tests
-* DTO tests
-* Helper class tests
-
-All tests are currently passing.
-
----
-
-# Current Architecture
-
-```
-Excel Workbook
-
-        │
-
-        ▼
-
-ExcelReader
-
-        │
-
-        ▼
-
-WorksheetHelper
-
-        │
-
-        ▼
-
-BMOLayout
-
-        │
-
-        ▼
-
-BMOInvestorLineImporter
-
-        │
-
-        ▼
-
-ImportedAccount DTO
-
-        │
-
-        ▼
-
-ImportService
-
-        │
-
-        ▼
-
-Repositories
-
-        │
-
-        ▼
-
-SQLite Database
-```
-
----
-
-# Current Architectural Principles
-
-The following architectural rules are now considered established.
-
-* Importers never communicate directly with SQLAlchemy.
-* Importers return DTO objects only.
-* DTOs are independent of persistence.
-* Repositories encapsulate all database access.
-* Business logic belongs in services.
-* SQLAlchemy models contain no business logic.
-* Historical data is immutable.
-* The database stores facts only.
-* Calculated values are never persisted.
-
----
-
-# Current Development Rules
-
-The following development rules apply throughout the project.
-
-1. Always provide complete files unless a smaller edit is clearly preferable.
-2. Work on one file at a time.
-3. Never remove existing functionality without discussion.
-4. Maintain production-quality code.
-5. Use complete type hints.
-6. Use complete docstrings.
-7. Every feature should include unit tests.
-8. Keep responsibilities clearly separated.
-9. Prefer readability over cleverness.
-10. Keep the test suite green after every change.
-
----
-
-# Immediate Next Task
-
-Implement:
-
-```
-src/services/import_service.py
-```
-
-Responsibilities:
-
-* Accept ImportedAccount DTOs.
-* Validate imported data.
-* Create an Import record.
-* Find or create Brokerage.
-* Find or create Account.
-* Find or create Company.
-* Create HoldingSnapshot records.
-* Create CashBalanceSnapshot records.
-* Commit the transaction.
-* Roll back the transaction on failure.
-
-The ImportService becomes the bridge between the importer layer and the persistence layer.
-
----
-
-# Implementation Roadmap
-
-## Phase 2: ImportService
-
-Goal:
-
-Persist one imported BMO workbook into SQLite.
-
-Deliverables:
-
-* ImportService
-* ImportResult
-* Transaction management
-* Validation
-* Persistence
-
----
-
-## Phase 3: End-to-End Import
-
-Goal:
-
-Make imports usable from a script, command-line workflow, or local web
-GUI.
-
-* Import every workbook within a folder.
-* Import one workbook from a browser upload form.
-* Support multiple accounts.
-* Support multiple brokerage files.
-* Produce a clear import summary.
-* Add duplicate-import safeguards where practical.
-
----
-
-## Phase 4: Portfolio Services
-
-Goal:
-
-Calculate read-only portfolio views from stored facts.
-
-* Current portfolio view.
-* Portfolio calculations
-* Asset allocation
-* Historical portfolio views
-* Performance calculations
-* Account, company, and cash summaries
-
----
-
-## Phase 5: Reporting
-
-Goal:
-
-Generate useful Excel reports from calculated views.
-
-* Portfolio reports
-* Account reports
-* Holdings reports
-* Cash balance reports
-
----
-
-## Phase 6: Market Data and Income
-
-Goal:
-
-Add external market facts and income tracking.
-
-* Market price downloads
-* Company updates
-* Historical pricing
-* Dividend history
-
----
-
-## Phase 7: Planning Engines
-
-Goal:
-
-Build long-range planning features after portfolio facts are reliable.
-
-* Retirement planning
-* Tax planning
-* Estate planning
-* Trust planning
-
----
-
-# Session Summary
-
-Completed during this development session:
-
-* Added CashBalanceSnapshot support.
-* Completed repository implementation.
-* Completed importer infrastructure.
-* Improved WorksheetHelper.
-* Updated ExcelReader to return WorksheetHelper objects.
-* Reorganized pytest fixtures.
-* Eliminated Python 3.13 deprecation warnings.
-* Restored a clean test suite.
-* Achieved:
-
-```
-107 tests passed
-0 failures
-0 warnings
-```
-
-This represents the completion of the project's foundation.
-
-The next development session will begin implementing the ImportService.
+```text
+financial_model.db
