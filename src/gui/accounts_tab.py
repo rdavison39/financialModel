@@ -6,7 +6,7 @@ import json
 import tkinter as tk
 from datetime import date
 from decimal import Decimal
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from sqlalchemy import select
 
@@ -15,6 +15,7 @@ from src.models.portfolio_snapshot import PortfolioSnapshot
 
 from src.database import get_session
 from src.database_init import initialize_database
+from src.services.account_export_service import AccountExportService
 from src.services.account_service import AccountService
 from src.services.portfolio_service import PortfolioService
 from src.services.portfolio_valuation_service import PortfolioValuationService
@@ -91,6 +92,15 @@ class AccountsTab(ttk.Frame):
             controls,
             text="View Holdings",
             command=self._view_holdings,
+        ).pack(
+            side="left",
+            padx=(8, 0),
+        )
+
+        ttk.Button(
+            controls,
+            text="Export Included Accounts",
+            command=self._export_included_accounts,
         ).pack(
             side="left",
             padx=(8, 0),
@@ -729,6 +739,55 @@ class AccountsTab(ttk.Frame):
             messagebox.showerror(
                 "Account Settings",
                 f"Unable to save account settings:\n\n"
+                f"{type(exc).__name__}: {exc}",
+            )
+
+    def _export_included_accounts(self) -> None:
+        """Export all included accounts to CSV files."""
+        output_directory = filedialog.askdirectory(
+            title="Select Export Folder",
+            parent=self,
+        )
+
+        if not output_directory:
+            return
+
+        try:
+            initialize_database()
+            session = get_session()
+
+            try:
+                paths = AccountExportService(session).export_included_accounts(
+                    output_directory,
+                )
+            finally:
+                session.close()
+
+            account_file_count = len(paths)
+            summary_created = any(
+                path.name == "All_Accounts.csv"
+                for path in paths
+            )
+
+            if summary_created:
+                message = (
+                    f"Export complete. {account_file_count - 1} account "
+                    f"file(s) and All_Accounts.csv were created in:\n\n"
+                    f"{output_directory}"
+                )
+            else:
+                message = (
+                    f"Export complete. {account_file_count} account file "
+                    f"was created in:\n\n{output_directory}"
+                )
+
+            self.status_label.configure(text="Account export complete.")
+            messagebox.showinfo("Export Accounts", message)
+
+        except Exception as exc:
+            messagebox.showerror(
+                "Export Accounts",
+                f"Unable to export accounts:\n\n"
                 f"{type(exc).__name__}: {exc}",
             )
 
