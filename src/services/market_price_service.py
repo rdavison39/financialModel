@@ -5,6 +5,7 @@ Service for retrieving current market prices from Yahoo Finance.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, time
@@ -58,124 +59,174 @@ class MarketPriceService:
         Close value. In that case, the last available regular-session
         one-minute bar is used as the fallback.
 
-        If Yahoo has no usable price for a security, return an unavailable
-        MarketPrice rather than raising an exception. The portfolio valuation
-        service can then fall back to the brokerage-imported price.
+        If Yahoo has no usable price for a security, try alternate Yahoo
+        symbols before returning an unavailable MarketPrice. The portfolio
+        valuation service can then fall back to the brokerage-imported price.
         """
-        yahoo_symbol = self._convert_symbol(symbol)
+        yahoo_symbols = self._yahoo_symbol_candidates(symbol)
 
-        self._report_progress(
-            f"Getting price: {symbol} -> {yahoo_symbol}"
-        )
-
-        try:
-            # FX is effectively a 24/5 market, so use its own logic.
-            if yahoo_symbol.upper() == "CAD=X":
-                return self._get_fx_price(yahoo_symbol)
-
-            ticker = yf.Ticker(yahoo_symbol)
-
-            now_et = datetime.now(EASTERN)
-            today = now_et.date()
-
-            daily_history = ticker.history(
-                period="10d",
-                interval="1d",
-            )
-            daily_rows = self._daily_rows(daily_history)
-
-            previous_close = self._previous_close(
-                daily_rows,
-                today,
-            )
-            today_close = self._close_for_date(
-                daily_rows,
-                today,
+        for yahoo_symbol in yahoo_symbols:
+            self._report_progress(
+                f"Getting price: {symbol} -> {yahoo_symbol}"
             )
 
-            intraday_history = ticker.history(
-                period="1d",
-                interval="1m",
-            )
+            try:
+                # FX is effectively a 24/5 market, so use its own logic.
+                if yahoo_symbol.upper() == "CAD=X":
+                    return self._get_fx_price(yahoo_symbol)
 
-            session_price = self._today_regular_session_price(
-                intraday_history,
-                today,
-            )
+                ticker = yf.Ticker(yahoo_symbol)
 
-            market_is_open = (
-                now_et.weekday() < 5
-                and MARKET_OPEN
-                <= now_et.time().replace(tzinfo=None)
-                < MARKET_CLOSE
-            )
+                now_et = datetime.now(EASTERN)
+                today = now_et.date()
 
-            if market_is_open:
-                current_price = session_price
+                daily_history = ticker.history(
+                    period="10d",
+                    interval="1d",
+                )
+                daily_rows = self._daily_rows(daily_history)
 
-                if current_price is None:
-                    current_price = today_close
-            else:
-                # After the regular session, prefer the official daily
-                # close. Yahoo may temporarily leave today's Close as NaN.
-                if today_close is not None:
-                    current_price = today_close
-                else:
+                previous_close = self._previous_close(
+                    daily_rows,
+                    today,
+                )
+                today_close = self._close_for_date(
+                    daily_rows,
+                    today,
+                )
+
+                intraday_history = ticker.history(
+                    period="1d",
+                    interval="1m",
+                )
+
+                session_price = self._today_regular_session_price(
+                    intraday_history,
+                    today,
+                )
+
+                market_is_open = (
+                    now_et.weekday() < 5
+                    and MARKET_OPEN
+                    <= now_et.time().replace(tzinfo=None)
+                    < MARKET_CLOSE
+                )
+
+                if market_is_open:
                     current_price = session_price
 
-            # Weekend/holiday/pre-open fallback.
-            if current_price is None:
-                current_price = self._latest_daily_close(
-                    daily_rows
-                )
+                    if current_price is None:
+                        current_price = today_close
+                else:
+                    # After the regular session, prefer the official daily
+                    # close. Yahoo may temporarily leave today's Close as NaN.
+                    if today_close is not None:
+                        current_price = today_close
+                    else:
+                        current_price = session_price
 
-            if current_price is None:
+                # Weekend/holiday/pre-open fallback.
+                if current_price is None:
+                    current_price = self._latest_daily_close(
+                        daily_rows
+                    )
+
+                if current_price is None:
+                    self._report_progress(
+                        f"  WARNING: No current price for {symbol} "
+                        f"using {yahoo_symbol}"
+                    )
+                    continue
+
+                if previous_close is None:
+                    previous_close = Decimal("0")
+
+                change = current_price - previous_close
+
+                if previous_close != 0:
+                    change_percent = (
+                        change / previous_close
+                    ) * Decimal("100")
+                else:
+                    change_percent = Decimal("0")
+
                 self._report_progress(
-                    f"  WARNING: No current price for {symbol}"
+                    f"  OK: {current_price} "
+                    f"(today: {change:+.2f}, "
+                    f"{change_percent:+.2f}%)"
                 )
-                return self._unavailable()
 
-            if previous_close is None:
-                previous_close = Decimal("0")
+                return MarketPrice(
+                    price=current_price,
+                    previous_close=previous_close,
+                    change=change,
+                    change_percent=change_percent,
+                    is_current=True,
+                )
 
-            change = current_price - previous_close
+            except Exception as exc:
+                # Some securities, particularly Canadian preferred shares,
+                # may not have usable Yahoo data under one ticker format.
+                # Try the next candidate before giving up.
+                logger.debug(
+                    "Unable to retrieve price for %s using %s: %s",
+                    symbol,
+                    yahoo_symbol,
+                    exc,
+                )
 
-            if previous_close != 0:
-                change_percent = (
-                    change / previous_close
-                ) * Decimal("100")
-            else:
-                change_percent = Decimal("0")
+                self._report_progress(
+                    f"  WARNING: Yahoo price unavailable for "
+                    f"{symbol} using {yahoo_symbol}"
+                )
 
-            self._report_progress(
-                f"  OK: {current_price} "
-                f"(today: {change:+.2f}, "
-                f"{change_percent:+.2f}%)"
-            )
+        self._report_progress(
+            f"  WARNING: Yahoo price unavailable for {symbol}"
+        )
+        return self._unavailable()
 
-            return MarketPrice(
-                price=current_price,
-                previous_close=previous_close,
-                change=change,
-                change_percent=change_percent,
-                is_current=True,
-            )
+    @staticmethod
+    def _yahoo_symbol_candidates(symbol: str) -> list[str]:
+        """Return Yahoo Finance symbols to try for a brokerage symbol."""
+        candidates: list[str] = []
 
-        except Exception as exc:
-            # Some securities in the portfolio, particularly Canadian
-            # preferred shares, may not have usable Yahoo intraday data.
-            # Do not abort the entire portfolio update.
-            logger.debug(
-                "Unable to retrieve price for %s: %s",
-                symbol,
-                exc,
-            )
+        normal_symbol = MarketPriceService._convert_symbol(symbol)
+        candidates.append(normal_symbol)
 
-            self._report_progress(
-                f"  WARNING: Yahoo price unavailable for {symbol}"
-            )
+        preferred_symbol = (
+            MarketPriceService._convert_preferred_share_symbol(symbol)
+        )
+        if preferred_symbol is not None and preferred_symbol not in candidates:
+            candidates.append(preferred_symbol)
 
-            return self._unavailable()
+        mapped_symbol = YAHOO_SYMBOL_MAP.get(symbol)
+        if mapped_symbol is not None and mapped_symbol not in candidates:
+            candidates.append(mapped_symbol)
+
+        return candidates
+
+    @staticmethod
+    def _convert_preferred_share_symbol(symbol: str) -> str | None:
+        """
+        Convert a Canadian preferred-share brokerage symbol to Yahoo format.
+
+        Examples:
+            BPO.PR.N:CA -> BPO-PN.TO
+            BCE.PR.M:CA -> BCE-PM.TO
+
+        Return None when the symbol does not match this pattern.
+        """
+        normalized = symbol.strip().upper()
+
+        match = re.fullmatch(
+            r"([A-Z0-9]+)\.PR\.([A-Z]):CA",
+            normalized,
+        )
+        if match is None:
+            return None
+
+        issuer, series = match.groups()
+        return f"{issuer}-P{series}.TO"
 
     def _get_fx_price(self, yahoo_symbol: str) -> MarketPrice:
         """Retrieve the current USD/CAD exchange rate."""
@@ -275,7 +326,6 @@ class MarketPriceService:
                     continue
 
                 close_decimal = Decimal(str(close))
-
             except (
                 InvalidOperation,
                 TypeError,
@@ -370,7 +420,6 @@ class MarketPriceService:
                     continue
 
                 close_decimal = Decimal(str(close))
-
             except (
                 InvalidOperation,
                 TypeError,
