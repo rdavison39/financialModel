@@ -20,6 +20,7 @@ from src.services.account_service import AccountService
 from src.services.portfolio_service import PortfolioService
 from src.services.portfolio_valuation_service import PortfolioValuationService
 from src.gui.account_holdings_window import show_account_holdings
+from src.gui.treeview_sort import bind_sortable_headings, numeric_sort_key, parse_text
 
 
 class AccountsTab(ttk.Frame):
@@ -297,6 +298,26 @@ class AccountsTab(ttk.Frame):
             yscrollcommand=self._account_tree_scrolled,
         )
 
+        bind_sortable_headings(
+            self.accounts_tree,
+            columns,
+            heading_text=headings,
+            key_for_column={
+                "brokerage": parse_text,
+                "account_number": parse_text,
+                "name": parse_text,
+                "account_type": parse_text,
+                "include": parse_text,
+                "current_value": numeric_sort_key,
+                "gain_loss": numeric_sort_key,
+                "roi": numeric_sort_key,
+                "cash": parse_text,
+                "holdings": numeric_sort_key,
+                "last_import": parse_text,
+            },
+            on_sorted=self._on_accounts_sorted,
+        )
+
         self.accounts_tree.bind(
             "<<TreeviewSelect>>",
             self._account_selected,
@@ -404,6 +425,7 @@ class AccountsTab(ttk.Frame):
             for item in self.accounts_tree.get_children():
                 self.accounts_tree.delete(item)
             self.today_canvas.delete("all")
+            self._today_by_account = {}
 
             for summary in summaries:
                 tags = ()
@@ -452,11 +474,12 @@ class AccountsTab(ttk.Frame):
                 else:
                     today_color = "red"
 
-                self._draw_today_row(
-                    row_index=len(self.today_canvas.find_withtag("today_row")),
-                    text=today_text,
-                    color=today_color,
+                self._today_by_account[summary.account_id] = (
+                    today_text,
+                    today_color,
                 )
+
+            self._redraw_today_canvas()
 
             self._update_today_canvas_scrollregion(len(summaries))
 
@@ -508,6 +531,24 @@ class AccountsTab(ttk.Frame):
             anchor="e",
             font=("Segoe UI", 9),
             tags=("today_row",),
+        )
+
+    def _redraw_today_canvas(self) -> None:
+        """Redraw Today values in the same order as the account Treeview."""
+        self.today_canvas.delete("all")
+        for row_index, item_id in enumerate(self.accounts_tree.get_children()):
+            account_id = int(item_id)
+            text, color = self._today_by_account.get(
+                account_id,
+                ("--", "black"),
+            )
+            self._draw_today_row(row_index, text, color)
+
+    def _on_accounts_sorted(self, _column: str, _descending: bool) -> None:
+        """Keep the separate Today display aligned after sorting."""
+        self._redraw_today_canvas()
+        self._update_today_canvas_scrollregion(
+            len(self.accounts_tree.get_children())
         )
 
     def _update_today_canvas_scrollregion(self, row_count: int) -> None:
