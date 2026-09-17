@@ -293,6 +293,8 @@ class PortfolioValuationService:
 
         updated_at = datetime.now()
 
+        from src.models.account import Account
+
         for account_id, portfolio in portfolios.items():
             (
                 current_holdings,
@@ -301,9 +303,16 @@ class PortfolioValuationService:
                 daily_change,
             ) = self.calculate_current_values(portfolio)
 
+            account = self.session.get(Account, account_id)
+            include_in_portfolio = (
+                account is not None and account.include_in_portfolio
+            )
+
             account_values[account_id] = total_value
-            consolidated_value += total_value
-            consolidated_daily_change += daily_change
+
+            if include_in_portfolio:
+                consolidated_value += total_value
+                consolidated_daily_change += daily_change
 
             self.account_daily_changes[account_id] = daily_change
             self.account_daily_change_percents[account_id] = (
@@ -338,14 +347,12 @@ class PortfolioValuationService:
             consolidated_daily_change,
         )
 
-        from src.models.account import Account
-
         brokerage_values: dict[int, Decimal] = {}
         brokerage_changes: dict[int, Decimal] = {}
 
         for account_id, value in account_values.items():
             account = self.session.get(Account, account_id)
-            if account is None:
+            if account is None or not account.include_in_portfolio:
                 continue
 
             brokerage_values[account.brokerage_id] = (
@@ -369,7 +376,16 @@ class PortfolioValuationService:
 
         consolidated_holdings: list[CurrentHolding] = []
         consolidated_cash: list[CurrentCash] = []
-        for current_holdings, current_cash, _, _ in account_current_values.values():
+        for account_id, (
+            current_holdings,
+            current_cash,
+            _,
+            _,
+        ) in account_current_values.items():
+            account = self.session.get(Account, account_id)
+            if account is None or not account.include_in_portfolio:
+                continue
+
             consolidated_holdings.extend(current_holdings)
             consolidated_cash.extend(current_cash)
 

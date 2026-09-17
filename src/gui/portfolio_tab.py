@@ -33,8 +33,19 @@ class PortfolioTab(ttk.Frame):
 
         self._build_ui()
 
+        # Refresh immediately when an account is included or excluded.
+        self.winfo_toplevel().bind(
+            "<<AccountSettingsChanged>>",
+            self._on_account_settings_changed,
+            add="+",
+        )
+
         # Load existing values when the tab is created.
         self.after(100, self._load_current_values)
+
+    def _on_account_settings_changed(self, _event=None) -> None:
+        """Refresh the displayed portfolio after account inclusion changes."""
+        self._load_current_values()
 
     # =============================================================
     # UI
@@ -370,6 +381,10 @@ class PortfolioTab(ttk.Frame):
             "today_zero",
             foreground="black",
         )
+        self.accounts_tree.tag_configure(
+            "excluded",
+            foreground="gray50",
+        )
 
         self.accounts_tree.heading(
             "brokerage",
@@ -614,6 +629,12 @@ class PortfolioTab(ttk.Frame):
                 # Consolidated value
                 # -------------------------------------------------
 
+                # The persisted consolidated snapshot is still used for
+                # TSX and valuation timestamp.  Portfolio totals themselves
+                # are derived from today's account snapshots and the account
+                # inclusion flag, so changing an account's inclusion setting
+                # takes effect immediately without requiring another market
+                # price update.
                 consolidated = session.scalar(
                     select(PortfolioSnapshot)
                     .where(
@@ -622,56 +643,84 @@ class PortfolioTab(ttk.Frame):
                     )
                 )
 
-                if consolidated is None:
-                    self.total_value_label.configure(
-                        text="$0.00"
+                included_account_count = session.scalar(
+                    select(func.count(Account.id)).where(
+                        Account.include_in_portfolio.is_(True),
+                    )
+                ) or 0
+
+                included_value, included_change = session.execute(
+                    select(
+                        func.sum(PortfolioSnapshot.total_value),
+                        func.sum(PortfolioSnapshot.daily_change),
+                    )
+                    .join(
+                        Account,
+                        Account.id == PortfolioSnapshot.account_id,
+                    )
+                    .where(
+                        PortfolioSnapshot.snapshot_date == today,
+                        Account.include_in_portfolio.is_(True),
+                    )
+                ).one()
+
+                if included_account_count == 0:
+                    # No accounts are currently included in the portfolio.
+                    total_value = Decimal("0")
+                    total_change = Decimal("0")
+                    total_percent = Decimal("0")
+                elif included_value is None and consolidated is not None:
+                    # Backward-compatible fallback for databases that have
+                    # not yet generated today's account-level snapshots.
+                    total_value = Decimal(str(consolidated.total_value))
+                    total_change = (
+                        Decimal(str(consolidated.daily_change))
+                        if consolidated.daily_change is not None
+                        else None
+                    )
+                    total_percent = (
+                        Decimal(str(consolidated.daily_change_percent))
+                        if consolidated.daily_change_percent is not None
+                        else None
+                    )
+                else:
+                    total_value = Decimal(str(included_value or 0))
+                    total_change = (
+                        Decimal(str(included_change))
+                        if included_change is not None
+                        else None
+                    )
+                    total_percent = (
+                        self._daily_change_percent_from_values(
+                            total_value,
+                            total_change,
+                        )
+                        if total_change is not None
+                        else None
                     )
 
+                self.total_value_label.configure(
+                    text=self._format_currency(total_value)
+                )
+
+                if total_change is None:
                     self.total_change_label.configure(
                         text="Today: --",
                         foreground="black",
                     )
-
-                    self.tsx_label.configure(
-                        text="TSX: --",
-                        foreground="black",
-                    )
-
-                    self.last_update_label.configure(
-                        text="Last Updated: --"
-                    )
-
                 else:
-                    self.total_value_label.configure(
-                        text=self._format_currency(
-                            consolidated.total_value
-                        )
+                    self.total_change_label.configure(
+                        text=(
+                            "Today: "
+                            f"{self._format_signed_currency(total_change)} "
+                            f"({self._format_percent(total_percent)})"
+                        ),
+                        foreground=(
+                            "green" if total_change > 0
+                            else "red" if total_change < 0
+                            else "black"
+                        ),
                     )
-
-                    total_change, total_percent = (
-                        self._calculate_daily_change(
-                            None,
-                            session=session,
-                        )
-                    )
-
-                    if total_change is None:
-                        self.total_change_label.configure(
-                            text="Today: --"
-                        )
-                    else:
-                        self.total_change_label.configure(
-                            text=(
-                                "Today: "
-                                f"{self._format_signed_currency(total_change)} "
-                                f"({self._format_percent(total_percent)})"
-                            ),
-                            foreground=(
-                                "green" if total_change > 0
-                                else "red" if total_change < 0
-                                else "black"
-                            ),
-                        )
 
                 # -------------------------------------------------
                 # TSX and last update
@@ -823,6 +872,10 @@ class PortfolioTab(ttk.Frame):
             else:
                 today_tag = "today_negative"
 
+            tags = [today_tag]
+            if not account.include_in_portfolio:
+                tags.append("excluded")
+
             self.accounts_tree.insert(
                 "",
                 "end",
@@ -835,7 +888,7 @@ class PortfolioTab(ttk.Frame):
                     today_text,
                     self._format_percent(roi),
                 ),
-                tags=(today_tag,),
+                tags=tuple(tags),
             )
 
     # =============================================================
@@ -871,6 +924,7 @@ class PortfolioTab(ttk.Frame):
             )
             .where(
                 PortfolioSnapshot.snapshot_date == today,
+                Account.include_in_portfolio.is_(True),
             )
             .group_by(
                 Brokerage.id,
@@ -1087,6 +1141,19 @@ class PortfolioTab(ttk.Frame):
     # =============================================================
     # Daily change
     # =============================================================
+
+    @staticmethod
+    def _daily_change_percent_from_values(
+        current_value: Decimal,
+        daily_change: Decimal,
+    ) -> Decimal:
+        """Calculate a daily percentage from current value and change."""
+        previous_value = current_value - daily_change
+
+        if previous_value == 0:
+            return Decimal("0")
+
+        return daily_change / previous_value * Decimal("100")
 
     def _calculate_daily_change(
         self,

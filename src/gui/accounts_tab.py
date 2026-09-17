@@ -27,6 +27,10 @@ class AccountsTab(ttk.Frame):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(3, weight=1)
 
+        self.account_type_var = tk.StringVar()
+        self.include_in_portfolio_var = tk.BooleanVar(value=True)
+        self._loading_account_settings = False
+
         self._build_ui()
 
         # Refresh automatically whenever the Portfolio tab completes an
@@ -159,6 +163,8 @@ class AccountsTab(ttk.Frame):
             "brokerage",
             "account_number",
             "name",
+            "account_type",
+            "include",
             "current_value",
             "cash",
             "holdings",
@@ -176,6 +182,8 @@ class AccountsTab(ttk.Frame):
             "brokerage": "Brokerage",
             "account_number": "Account Number",
             "name": "Name",
+            "account_type": "Type",
+            "include": "Include",
             "current_value": "Current Value",
             "cash": "Cash",
             "holdings": "Holdings",
@@ -186,6 +194,8 @@ class AccountsTab(ttk.Frame):
             "brokerage": 140,
             "account_number": 130,
             "name": 220,
+            "account_type": 100,
+            "include": 80,
             "current_value": 150,
             "cash": 220,
             "holdings": 90,
@@ -205,6 +215,8 @@ class AccountsTab(ttk.Frame):
                     "brokerage",
                     "account_number",
                     "name",
+                    "account_type",
+                    "include",
                     "cash",
                     "last_import",
                 } else "e",
@@ -232,6 +244,11 @@ class AccountsTab(ttk.Frame):
             yscrollcommand=scrollbar.set,
         )
 
+        self.accounts_tree.tag_configure(
+            "excluded",
+            foreground="gray50",
+        )
+
         self.accounts_tree.bind(
             "<<TreeviewSelect>>",
             self._account_selected,
@@ -241,12 +258,57 @@ class AccountsTab(ttk.Frame):
             lambda _event: self._view_holdings(),
         )
 
+        settings = ttk.LabelFrame(
+            self,
+            text="Account Settings",
+            padding=(10, 8),
+        )
+        settings.grid(
+            row=4,
+            column=0,
+            sticky="ew",
+            pady=(8, 0),
+        )
+
+        ttk.Label(
+            settings,
+            text="Account Type:",
+        ).pack(side="left")
+
+        self.account_type_combo = ttk.Combobox(
+            settings,
+            textvariable=self.account_type_var,
+            values=("", *AccountService.ACCOUNT_TYPES),
+            state="readonly",
+            width=12,
+        )
+        self.account_type_combo.pack(
+            side="left",
+            padx=(6, 18),
+        )
+
+        self.include_checkbutton = ttk.Checkbutton(
+            settings,
+            text="Include in Portfolio",
+            variable=self.include_in_portfolio_var,
+        )
+        self.include_checkbutton.pack(side="left")
+
+        ttk.Button(
+            settings,
+            text="Save Account Settings",
+            command=self._save_account_settings,
+        ).pack(
+            side="left",
+            padx=(18, 0),
+        )
+
         self.status_label = ttk.Label(
             self,
             text="",
         )
         self.status_label.grid(
-            row=4,
+            row=5,
             column=0,
             sticky="w",
             pady=(8, 0),
@@ -277,6 +339,7 @@ class AccountsTab(ttk.Frame):
                 self.accounts_tree.delete(item)
 
             for summary in summaries:
+                tags = ("excluded",) if not summary.include_in_portfolio else ()
                 self.accounts_tree.insert(
                     "",
                     "end",
@@ -285,11 +348,14 @@ class AccountsTab(ttk.Frame):
                         summary.brokerage_name,
                         summary.account_number,
                         summary.name,
+                        summary.account_type or "--",
+                        "Yes" if summary.include_in_portfolio else "No",
                         self._format_currency(summary.current_value),
                         self._format_cash(summary.cash_by_currency),
                         str(summary.holdings_count),
                         self._format_datetime(summary.last_import),
                     ),
+                    tags=tags,
                 )
 
             self.status_label.configure(
@@ -327,6 +393,15 @@ class AccountsTab(ttk.Frame):
             session = get_session()
 
             try:
+                account = AccountService(session).get(account_id)
+                if account is not None:
+                    self._loading_account_settings = True
+                    self.account_type_var.set(account.account_type or "")
+                    self.include_in_portfolio_var.set(
+                        bool(account.include_in_portfolio)
+                    )
+                    self._loading_account_settings = False
+
                 snapshots = session.scalars(
                     select(ImportRecord.snapshot_date)
                     .where(ImportRecord.account_id == account_id)
@@ -352,6 +427,46 @@ class AccountsTab(ttk.Frame):
                     "Unable to load snapshot dates: "
                     f"{type(exc).__name__}: {exc}"
                 )
+            )
+
+    def _save_account_settings(self) -> None:
+        """Persist the selected account's type and portfolio inclusion."""
+        account_id = self._selected_account_id()
+
+        if account_id is None:
+            messagebox.showinfo(
+                "Account Settings",
+                "Select an account first.",
+            )
+            return
+
+        try:
+            initialize_database()
+            session = get_session()
+
+            try:
+                AccountService(session).update_settings(
+                    account_id=account_id,
+                    account_type=self.account_type_var.get().strip() or None,
+                    include_in_portfolio=self.include_in_portfolio_var.get(),
+                )
+            finally:
+                session.close()
+
+            self._load_accounts()
+            self.accounts_tree.selection_set(str(account_id))
+            self.accounts_tree.focus(str(account_id))
+
+            self.status_label.configure(
+                text="Account settings saved."
+            )
+            self.event_generate("<<AccountSettingsChanged>>", when="tail")
+
+        except Exception as exc:
+            messagebox.showerror(
+                "Account Settings",
+                f"Unable to save account settings:\n\n"
+                f"{type(exc).__name__}: {exc}",
             )
 
     def _compare_snapshots(self) -> None:

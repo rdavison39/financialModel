@@ -27,6 +27,8 @@ class AccountSummary:
     brokerage_name: str
     account_number: str
     name: str
+    account_type: str | None
+    include_in_portfolio: bool
     current_value: Decimal | None
     cash_by_currency: dict[str, Decimal]
     holdings_count: int
@@ -35,6 +37,8 @@ class AccountSummary:
 
 class AccountService:
     """Manages investment accounts."""
+
+    ACCOUNT_TYPES = ("RRSP", "RESP", "TFSA", "Trust", "Margin")
 
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -62,6 +66,7 @@ class AccountService:
             brokerage_id=brokerage.id,
             account_number=account_number,
             name=name or account_number,
+            include_in_portfolio=True,
         )
         self.session.add(account)
         self.session.commit()
@@ -79,6 +84,32 @@ class AccountService:
             raise ValueError(f"Account {account_id} does not exist.")
 
         account.name = name
+        self.session.commit()
+        self.session.refresh(account)
+        return account
+
+    def update_settings(
+        self,
+        account_id: int,
+        account_type: str | None,
+        include_in_portfolio: bool,
+    ) -> Account:
+        """Update the classification and portfolio inclusion for an account."""
+        if account_type == "":
+            account_type = None
+
+        if account_type is not None and account_type not in self.ACCOUNT_TYPES:
+            raise ValueError(
+                f"Invalid account type: {account_type}. "
+                f"Expected one of: {', '.join(self.ACCOUNT_TYPES)}."
+            )
+
+        account = self.session.get(Account, account_id)
+        if account is None:
+            raise ValueError(f"Account {account_id} does not exist.")
+
+        account.account_type = account_type
+        account.include_in_portfolio = bool(include_in_portfolio)
         self.session.commit()
         self.session.refresh(account)
         return account
@@ -190,6 +221,8 @@ class AccountService:
                     brokerage_name=brokerage.name,
                     account_number=account.account_number,
                     name=account.name,
+                    account_type=account.account_type,
+                    include_in_portfolio=account.include_in_portfolio,
                     current_value=(
                         Decimal(str(current_value))
                         if current_value is not None

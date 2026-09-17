@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from src.models.base import Base
@@ -229,3 +229,127 @@ def test_calculate_current_values_reuses_prepared_price_cache():
         assert first[2] == second[2]
     finally:
         session.close()
+
+
+def test_update_all_accounts_excludes_accounts_from_consolidated_totals():
+    """Only included accounts contribute to consolidated valuation data."""
+    session = make_session()
+
+    class FakeMarketPriceService:
+        def get_price(self, symbol):
+            if symbol == "CAD=X":
+                return MarketPrice(
+                    price=Decimal("1.00"),
+                    previous_close=Decimal("1.00"),
+                    change=Decimal("0"),
+                    change_percent=Decimal("0"),
+                    is_current=True,
+                )
+            if symbol == "^GSPTSE":
+                return MarketPrice(
+                    price=Decimal("25000"),
+                    previous_close=Decimal("24900"),
+                    change=Decimal("100"),
+                    change_percent=Decimal("0.4016"),
+                    is_current=True,
+                )
+            return MarketPrice(
+                price=Decimal("10.00"),
+                previous_close=Decimal("9.00"),
+                change=Decimal("1.00"),
+                change_percent=Decimal("11.1111"),
+                is_current=True,
+            )
+
+    brokerage = Brokerage(name="Test Brokerage")
+    session.add(brokerage)
+    session.flush()
+
+    included = Account(
+        brokerage_id=brokerage.id,
+        account_number="100",
+        name="Included",
+        include_in_portfolio=True,
+    )
+    excluded = Account(
+        brokerage_id=brokerage.id,
+        account_number="200",
+        name="Excluded",
+        include_in_portfolio=False,
+    )
+    session.add_all([included, excluded])
+    session.commit()
+
+    included_portfolio = SimpleNamespace(
+        holdings=[
+            SimpleNamespace(
+                symbol="AAA:CA", company_name="AAA", quantity=Decimal("10"),
+                price=Decimal("9"), market_value=Decimal("90"),
+                currency="CAD", average_cost=Decimal("8"),
+                unrealized_gain=Decimal("10"),
+                unrealized_gain_percent=Decimal("12.5"),
+                daily_change=Decimal("10"),
+                daily_change_percent=Decimal("11.1111"),
+                previous_close=Decimal("9"),
+            )
+        ],
+        cash=[],
+    )
+    excluded_portfolio = SimpleNamespace(
+        holdings=[
+            SimpleNamespace(
+                symbol="BBB:CA", company_name="BBB", quantity=Decimal("20"),
+                price=Decimal("9"), market_value=Decimal("180"),
+                currency="CAD", average_cost=Decimal("8"),
+                unrealized_gain=Decimal("20"),
+                unrealized_gain_percent=Decimal("12.5"),
+                daily_change=Decimal("20"),
+                daily_change_percent=Decimal("11.1111"),
+                previous_close=Decimal("9"),
+            )
+        ],
+        cash=[],
+    )
+
+    service = PortfolioValuationService(
+        session,
+        market_price_service=FakeMarketPriceService(),
+    )
+
+    portfolios = {
+        included.id: included_portfolio,
+        excluded.id: excluded_portfolio,
+    }
+    service.portfolio_service.get_latest_portfolio = (
+        lambda account_id: portfolios[account_id]
+    )
+
+    total = service.update_all_accounts()
+
+    assert total == Decimal("100")
+    assert service.total_daily_change == Decimal("10")
+
+    consolidated = session.scalar(
+        select(PortfolioSnapshot).where(
+            PortfolioSnapshot.account_id.is_(None),
+            PortfolioSnapshot.snapshot_date == date.today(),
+        )
+    )
+
+    assert consolidated is not None
+    assert consolidated.total_value == Decimal("100")
+    assert consolidated.daily_change == Decimal("10")
+
+    account_snapshots = session.scalars(
+        select(PortfolioSnapshot)
+        .where(PortfolioSnapshot.account_id.is_not(None))
+        .order_by(PortfolioSnapshot.account_id)
+    ).all()
+
+    assert len(account_snapshots) == 2
+    assert account_snapshots[0].total_value == Decimal("100")
+    assert account_snapshots[1].total_value == Decimal("200")
+
+    assert consolidated.valuation_data is not None
+    assert '"AAA:CA"' in consolidated.valuation_data
+    assert '"BBB:CA"' not in consolidated.valuation_data

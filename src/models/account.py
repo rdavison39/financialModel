@@ -2,7 +2,7 @@
 Account database model.
 """
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base
@@ -28,6 +28,18 @@ class Account(Base):
     name: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
+    )
+
+    account_type: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+
+    include_in_portfolio: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="1",
     )
 
     __table_args__ = (
