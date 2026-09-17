@@ -2,13 +2,16 @@
 Accounts tab for the Financial Model GUI.
 """
 
+import json
 import tkinter as tk
+from datetime import date
 from decimal import Decimal
 from tkinter import messagebox, simpledialog, ttk
 
 from sqlalchemy import select
 
 from src.models.import_record import ImportRecord
+from src.models.portfolio_snapshot import PortfolioSnapshot
 
 from src.database import get_session
 from src.database_init import initialize_database
@@ -156,7 +159,6 @@ class AccountsTab(ttk.Frame):
             column=0,
             sticky="nsew",
         )
-        frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
 
         columns = (
@@ -166,6 +168,8 @@ class AccountsTab(ttk.Frame):
             "account_type",
             "include",
             "current_value",
+            "gain_loss",
+            "roi",
             "cash",
             "holdings",
             "last_import",
@@ -185,21 +189,25 @@ class AccountsTab(ttk.Frame):
             "account_type": "Type",
             "include": "Include",
             "current_value": "Current Value",
+            "gain_loss": "Gain/Loss",
+            "roi": "ROI",
             "cash": "Cash",
             "holdings": "Holdings",
             "last_import": "Last Import",
         }
 
         widths = {
-            "brokerage": 140,
-            "account_number": 130,
-            "name": 220,
-            "account_type": 100,
-            "include": 80,
-            "current_value": 150,
-            "cash": 220,
-            "holdings": 90,
-            "last_import": 180,
+            "brokerage": 75,
+            "account_number": 95,
+            "name": 135,
+            "account_type": 65,
+            "include": 55,
+            "current_value": 120,
+            "gain_loss": 120,
+            "roi": 65,
+            "cash": 115,
+            "holdings": 65,
+            "last_import": 105,
         }
 
         for column in columns:
@@ -210,43 +218,73 @@ class AccountsTab(ttk.Frame):
             self.accounts_tree.column(
                 column,
                 width=widths[column],
-                minwidth=80,
-                anchor="w" if column in {
-                    "brokerage",
-                    "account_number",
-                    "name",
-                    "account_type",
-                    "include",
-                    "cash",
-                    "last_import",
-                } else "e",
-                stretch=True,
+                minwidth=50,
+                anchor=(
+                    "center"
+                    if column == "include"
+                    else "w"
+                    if column in {
+                        "brokerage",
+                        "account_number",
+                        "name",
+                        "account_type",
+                        "cash",
+                        "last_import",
+                    }
+                    else "e"
+                ),
+                stretch=False,
             )
 
         self.accounts_tree.grid(
             row=0,
             column=0,
-            sticky="nsew",
+            sticky="nsw",
         )
+
+        # Today is rendered in a small Canvas beside the single authoritative
+        # account Treeview.  This lets the Today values be coloured
+        # independently without creating a second selectable Treeview.
+        today_panel = ttk.Frame(frame, width=120)
+        today_panel.grid(
+            row=0,
+            column=1,
+            sticky="nsw",
+        )
+        today_panel.grid_propagate(False)
+        today_panel.columnconfigure(0, weight=1)
+        today_panel.rowconfigure(1, weight=1)
+
+        self.today_heading = ttk.Label(
+            today_panel,
+            text="Today",
+            anchor="e",
+            font=("Segoe UI", 10, "bold"),
+            padding=(4, 4),
+        )
+        self.today_heading.grid(row=0, column=0, sticky="ew")
+
+        self.today_canvas = tk.Canvas(
+            today_panel,
+            width=120,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.today_canvas.grid(row=1, column=0, sticky="nsew")
 
         scrollbar = ttk.Scrollbar(
             frame,
             orient="vertical",
-            command=self.accounts_tree.yview,
+            command=self._scroll_account_table,
         )
         scrollbar.grid(
             row=0,
-            column=1,
+            column=2,
             sticky="ns",
         )
 
         self.accounts_tree.configure(
-            yscrollcommand=scrollbar.set,
-        )
-
-        self.accounts_tree.tag_configure(
-            "excluded",
-            foreground="gray50",
+            yscrollcommand=self._account_tree_scrolled,
         )
 
         self.accounts_tree.bind(
@@ -254,8 +292,22 @@ class AccountsTab(ttk.Frame):
             self._account_selected,
         )
         self.accounts_tree.bind(
+            "<ButtonRelease-1>",
+            self._toggle_include_from_click,
+            add="+",
+        )
+        self.accounts_tree.bind(
             "<Double-1>",
-            lambda _event: self._view_holdings(),
+            self._on_account_double_click,
+            add="+",
+        )
+        self.accounts_tree.bind(
+            "<MouseWheel>",
+            self._on_tree_mousewheel,
+        )
+        self.today_canvas.bind(
+            "<MouseWheel>",
+            self._on_tree_mousewheel,
         )
 
         settings = ttk.LabelFrame(
@@ -286,13 +338,6 @@ class AccountsTab(ttk.Frame):
             side="left",
             padx=(6, 18),
         )
-
-        self.include_checkbutton = ttk.Checkbutton(
-            settings,
-            text="Include in Portfolio",
-            variable=self.include_in_portfolio_var,
-        )
-        self.include_checkbutton.pack(side="left")
 
         ttk.Button(
             settings,
@@ -332,14 +377,44 @@ class AccountsTab(ttk.Frame):
 
             try:
                 summaries = AccountService(session).get_summaries()
+                today = date.today()
+                snapshots = session.scalars(
+                    select(PortfolioSnapshot).where(
+                        PortfolioSnapshot.account_id.is_not(None),
+                        PortfolioSnapshot.snapshot_date == today,
+                    )
+                ).all()
+                snapshot_by_account = {
+                    snapshot.account_id: snapshot
+                    for snapshot in snapshots
+                }
             finally:
                 session.close()
 
             for item in self.accounts_tree.get_children():
                 self.accounts_tree.delete(item)
+            self.today_canvas.delete("all")
 
             for summary in summaries:
-                tags = ("excluded",) if not summary.include_in_portfolio else ()
+                tags = ()
+
+                snapshot = snapshot_by_account.get(summary.account_id)
+                today_change, today_percent, gain_loss, roi = (
+                    self._performance_from_snapshot(
+                        snapshot,
+                        summary.current_value,
+                    )
+                )
+
+                today_text = (
+                    "--"
+                    if today_change is None
+                    else (
+                        f"{self._format_signed_currency(today_change)} "
+                        f"({self._format_percent(today_percent)})"
+                    )
+                )
+
                 self.accounts_tree.insert(
                     "",
                     "end",
@@ -349,14 +424,31 @@ class AccountsTab(ttk.Frame):
                         summary.account_number,
                         summary.name,
                         summary.account_type or "--",
-                        "Yes" if summary.include_in_portfolio else "No",
+                        "☑" if summary.include_in_portfolio else "☐",
                         self._format_currency(summary.current_value),
+                        self._format_signed_currency(gain_loss),
+                        self._format_percent(roi),
                         self._format_cash(summary.cash_by_currency),
                         str(summary.holdings_count),
                         self._format_datetime(summary.last_import),
                     ),
                     tags=tags,
                 )
+
+                if today_change is None or today_change == 0:
+                    today_color = "black"
+                elif today_change > 0:
+                    today_color = "green"
+                else:
+                    today_color = "red"
+
+                self._draw_today_row(
+                    row_index=len(self.today_canvas.find_withtag("today_row")),
+                    text=today_text,
+                    color=today_color,
+                )
+
+            self._update_today_canvas_scrollregion(len(summaries))
 
             self.status_label.configure(
                 text=f"{len(summaries)} account(s)"
@@ -370,6 +462,120 @@ class AccountsTab(ttk.Frame):
                 f"{type(exc).__name__}: {exc}",
             )
 
+    def _account_tree_scrolled(self, first: str, last: str) -> None:
+        """Keep the Today canvas vertically aligned with the account rows."""
+        self._today_scroll_fraction = float(first)
+        self._today_scroll_last = float(last)
+        self._update_today_canvas_position()
+
+    def _scroll_account_table(self, *args) -> None:
+        """Scroll the account table and its Today display together."""
+        self.accounts_tree.yview(*args)
+        self._update_today_canvas_position()
+
+    def _on_tree_mousewheel(self, event) -> str:
+        """Scroll the account table from either the table or Today column."""
+        units = -1 * int(event.delta / 120) if event.delta else 0
+        if units:
+            self.accounts_tree.yview_scroll(units, "units")
+            self._update_today_canvas_position()
+        return "break"
+
+    def _draw_today_row(
+        self,
+        row_index: int,
+        text: str,
+        color: str,
+    ) -> None:
+        """Draw one Today value in the canvas."""
+        row_height = 20
+        y = row_index * row_height + (row_height / 2)
+        self.today_canvas.create_text(
+            116,
+            y,
+            text=text,
+            fill=color,
+            anchor="e",
+            font=("Segoe UI", 9),
+            tags=("today_row",),
+        )
+
+    def _update_today_canvas_scrollregion(self, row_count: int) -> None:
+        """Set the Today canvas scroll region to match the account rows."""
+        row_height = 20
+        height = max(1, row_count * row_height)
+        self.today_canvas.configure(scrollregion=(0, 0, 120, height))
+        self._update_today_canvas_position()
+
+    def _update_today_canvas_position(self) -> None:
+        """Apply the Treeview's current vertical scroll position to Today."""
+        if not hasattr(self, "_today_scroll_fraction"):
+            return
+        self.today_canvas.yview_moveto(self._today_scroll_fraction)
+
+    @staticmethod
+    def _performance_from_snapshot(
+        snapshot: PortfolioSnapshot | None,
+        current_value: Decimal,
+    ) -> tuple[Decimal | None, Decimal | None, Decimal, Decimal]:
+        """Return today's change, unrealized gain, and ROI from cached data."""
+        if snapshot is None:
+            return None, None, Decimal("0"), Decimal("0")
+
+        today_change = (
+            Decimal(str(snapshot.daily_change))
+            if snapshot.daily_change is not None
+            else None
+        )
+
+        if today_change is None:
+            today_percent = None
+        else:
+            previous_value = Decimal(str(current_value)) - today_change
+            today_percent = (
+                today_change / previous_value * Decimal("100")
+                if previous_value != 0
+                else Decimal("0")
+            )
+
+        gain_loss = Decimal("0")
+        cost_basis = Decimal("0")
+
+        if snapshot.valuation_data:
+            data = json.loads(snapshot.valuation_data)
+            usd_to_cad = Decimal(str(snapshot.usd_to_cad or 0))
+
+            for item in data.get("holdings", []):
+                gain = item.get("unrealized_gain")
+                market_value = item.get("market_value")
+                if gain is None or market_value is None:
+                    continue
+
+                gain_value = Decimal(str(gain))
+                market_value_cad = Decimal(str(market_value))
+                currency = str(item.get("currency") or "CAD").upper()
+                is_usd = (
+                    currency == "USD"
+                    or str(item.get("symbol", "")).endswith(":US")
+                )
+
+                # Cached market_value is already stored in CAD.  Brokerage
+                # unrealized_gain remains in the holding's native currency,
+                # so only the gain needs FX conversion for USD positions.
+                if is_usd:
+                    gain_value *= usd_to_cad
+
+                gain_loss += gain_value
+                cost_basis += market_value_cad - gain_value
+
+        roi = (
+            gain_loss / cost_basis * Decimal("100")
+            if cost_basis != 0
+            else Decimal("0")
+        )
+
+        return today_change, today_percent, gain_loss, roi
+
     def _selected_account_id(self) -> int | None:
         """Return the selected account ID."""
 
@@ -380,8 +586,65 @@ class AccountsTab(ttk.Frame):
 
         return int(selected[0])
 
+    def _toggle_include_from_click(self, event) -> str | None:
+        """Toggle portfolio inclusion when the Include cell is clicked."""
+        if self.accounts_tree.identify("region", event.x, event.y) != "cell":
+            return None
+        if self.accounts_tree.identify_column(event.x) != "#5":
+            return None
+
+        row_id = self.accounts_tree.identify_row(event.y)
+        if not row_id or not self.accounts_tree.exists(row_id):
+            return None
+
+        values = list(self.accounts_tree.item(row_id, "values"))
+        new_value = values[4] not in ("☑", "Yes", "True", "1")
+
+        # Let Treeview finish its normal selection processing first.  The
+        # database write is then queued so the mouse event itself remains
+        # lightweight and cannot interfere with row selection/highlighting.
+        self.after_idle(
+            lambda account_id=int(row_id), value=new_value:
+            self._persist_include_change(account_id, value)
+        )
+        return None
+
+    def _persist_include_change(self, account_id: int, include: bool) -> None:
+        """Persist an inline Include checkbox change."""
+        if not self.accounts_tree.exists(str(account_id)):
+            return
+        try:
+            session = get_session()
+            try:
+                values = self.accounts_tree.item(str(account_id), "values")
+                account_type = values[3] if len(values) > 3 and values[3] else None
+                AccountService(session).update_settings(
+                    account_id=account_id,
+                    account_type=account_type,
+                    include_in_portfolio=include,
+                )
+            finally:
+                session.close()
+
+            values = list(self.accounts_tree.item(str(account_id), "values"))
+            if len(values) >= 5:
+                values[4] = "☑" if include else "☐"
+                self.accounts_tree.item(str(account_id), values=values)
+
+            self.event_generate("<<AccountSettingsChanged>>", when="tail")
+        except Exception as exc:
+            messagebox.showerror(
+                "Account Settings",
+                f"Unable to update portfolio inclusion:\n\n"
+                f"{type(exc).__name__}: {exc}",
+            )
+
+    def _on_account_double_click(self, _event=None) -> None:
+        """Open the selected account after Treeview selection has completed."""
+        self.after_idle(self._view_holdings)
+
     def _account_selected(self, _event=None) -> None:
-        """Load the two most recent snapshot dates for the selected account."""
+        """Load settings and snapshot dates for the selected account."""
 
         account_id = self._selected_account_id()
 
@@ -1017,6 +1280,18 @@ class AccountsTab(ttk.Frame):
             )
 
         return " / ".join(parts)
+
+    @staticmethod
+    def _format_percent(
+        value: Decimal | None,
+    ) -> str:
+        """Format a percentage value."""
+
+        if value is None:
+            return "--"
+
+        value = Decimal(str(value))
+        return f"{value:+.2f}%"
 
     @staticmethod
     def _format_datetime(
