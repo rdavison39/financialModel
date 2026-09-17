@@ -33,6 +33,7 @@ class CurrentHolding:
     daily_change: Decimal | None
     daily_change_percent: Decimal | None
     previous_close: Decimal | None
+    is_current: bool = True
 
     @property
     def current_price(self) -> Decimal:
@@ -186,6 +187,7 @@ class PortfolioValuationService:
                         holding.daily_change_percent
                     ),
                     previous_close=previous_close,
+                    is_current=market_price.is_current,
                 )
             )
 

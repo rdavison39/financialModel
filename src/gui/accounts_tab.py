@@ -13,7 +13,9 @@ from src.models.import_record import ImportRecord
 from src.database import get_session
 from src.database_init import initialize_database
 from src.services.account_service import AccountService
-from src.services.market_price_service import MarketPriceService
+from src.services.portfolio_service import PortfolioService
+from src.services.portfolio_valuation_service import PortfolioValuationService
+from src.gui.account_holdings_window import show_account_holdings
 
 
 class AccountsTab(ttk.Frame):
@@ -761,289 +763,68 @@ class AccountsTab(ttk.Frame):
             )
 
     def _view_holdings(self) -> None:
-        """Open the selected account holdings using current Yahoo prices."""
+        """Open the shared consolidated account detail window."""
+
         account_id = self._selected_account_id()
 
         if account_id is None:
             messagebox.showinfo(
-                "View Holdings",
+                "Account Holdings",
                 "Select an account first.",
             )
             return
+
+        session = None
 
         try:
             initialize_database()
             session = get_session()
 
-            try:
-                from src.services.portfolio_service import PortfolioService
-
-                portfolio = PortfolioService(
-                    session
-                ).get_latest_portfolio(account_id)
-            finally:
-                session.close()
+            portfolio = PortfolioService(session).get_latest_portfolio(account_id)
 
             if portfolio is None:
                 messagebox.showinfo(
-                    "View Holdings",
+                    "Account Holdings",
                     "No imported portfolio exists for this account.",
                 )
                 return
 
-            # The database holdings are the authoritative imported snapshot.
-            # For this window, refresh the displayed price and market value
-            # from Yahoo so the account detail agrees with the main Portfolio
-            # update.  Market value is scaled from the brokerage value rather
-            # than calculated as quantity * price, because brokerage values
-            # already account for FX and option contract multipliers.
-            market_price_service = MarketPriceService()
+            valuation_service = PortfolioValuationService(session)
+            symbols = {"CAD=X"}
+            symbols.update(holding.symbol for holding in portfolio.holdings)
+            valuation_service._prepare_price_cache(symbols)
 
-            current_rows = []
-            for holding in sorted(
-                portfolio.holdings,
-                key=lambda item: item.symbol,
-            ):
-                market_price = market_price_service.get_price(
-                    holding.symbol
-                )
+            (
+                current_holdings,
+                current_cash,
+                current_total,
+                current_daily_change,
+            ) = valuation_service.calculate_current_values(portfolio)
 
-                if (
-                    market_price.is_current
-                    and holding.price is not None
-                    and holding.price != 0
-                ):
-                    current_price = market_price.price
-                    current_market_value = (
-                        holding.market_value
-                        * current_price
-                        / holding.price
-                    )
+            values = self.accounts_tree.item(str(account_id), "values")
+            account_number = str(values[1]) if len(values) > 1 else str(account_id)
+            account_name = str(values[2]) if len(values) > 2 else ""
 
-                    # Preserve the brokerage's original cost basis while
-                    # updating unrealized gain to the current market value.
-                    if holding.unrealized_gain is not None:
-                        cost_basis = (
-                            holding.market_value
-                            - holding.unrealized_gain
-                        )
-                        current_unrealized_gain = (
-                            current_market_value - cost_basis
-                        )
-                    else:
-                        current_unrealized_gain = None
-                else:
-                    current_price = holding.price
-                    current_market_value = holding.market_value
-                    current_unrealized_gain = holding.unrealized_gain
-
-                current_rows.append(
-                    (
-                        holding,
-                        current_price,
-                        current_market_value,
-                        current_unrealized_gain,
-                        not market_price.is_current,
-                    )
-                )
-
-            values = self.accounts_tree.item(
-                str(account_id),
-                "values",
-            )
-            account_number = (
-                str(values[1]) if len(values) > 1 else str(account_id)
-            )
-
-            window = tk.Toplevel(self)
-            window.title(
-                f"Holdings - Account {account_number}"
-            )
-            window.geometry("1100x600")
-            window.minsize(900, 450)
-
-            window.columnconfigure(0, weight=1)
-            window.rowconfigure(1, weight=1)
-
-            header = ttk.Frame(window)
-            header.grid(
-                row=0,
-                column=0,
-                sticky="ew",
-                padx=15,
-                pady=12,
-            )
-            header.columnconfigure(1, weight=1)
-
-            ttk.Label(
-                header,
-                text=f"Account {account_number}",
-                font=("Segoe UI", 13, "bold"),
-            ).grid(
-                row=0,
-                column=0,
-                sticky="w",
-            )
-
-            ttk.Label(
-                header,
-                text=(
-                    f"Imported Snapshot: "
-                    f"{portfolio.snapshot_date:%Y-%m-%d %H:%M:%S}"
-                ),
-                font=("Segoe UI", 10),
-            ).grid(
-                row=0,
-                column=1,
-                sticky="e",
-            )
-
-            frame = ttk.Frame(window)
-            frame.grid(
-                row=1,
-                column=0,
-                sticky="nsew",
-                padx=15,
-                pady=(0, 15),
-            )
-            frame.columnconfigure(0, weight=1)
-            frame.rowconfigure(0, weight=1)
-
-            columns = (
-                "symbol",
-                "company",
-                "quantity",
-                "average_cost",
-                "price",
-                "market_value",
-                "unrealized_gain",
-            )
-
-            tree = ttk.Treeview(
-                frame,
-                columns=columns,
-                show="headings",
-            )
-
-            headings = {
-                "symbol": "Symbol",
-                "company": "Company",
-                "quantity": "Quantity",
-                "average_cost": "Avg Cost",
-                "price": "Current Price",
-                "market_value": "Current Market Value",
-                "unrealized_gain": "Current Unrealized Gain",
-            }
-
-            for column in columns:
-                tree.heading(
-                    column,
-                    text=headings[column],
-                )
-
-            tree.column("symbol", width=100, anchor="w")
-            tree.column("company", width=250, anchor="w")
-            tree.column("quantity", width=110, anchor="e")
-            tree.column("average_cost", width=120, anchor="e")
-            tree.column("price", width=120, anchor="e")
-            tree.column("market_value", width=160, anchor="e")
-            tree.column("unrealized_gain", width=170, anchor="e")
-
-            tree.tag_configure(
-                "fallback",
-                foreground="#b36b00",
-            )
-
-            for (
-                holding,
-                current_price,
-                current_market_value,
-                current_gain,
-                used_fallback,
-            ) in current_rows:
-                price_text = self._format_currency(current_price)
-                if used_fallback:
-                    price_text += " *"
-
-                tree.insert(
-                    "",
-                    "end",
-                    values=(
-                        holding.symbol,
-                        holding.company_name,
-                        self._format_quantity(holding.quantity),
-                        self._format_currency(holding.average_cost),
-                        price_text,
-                        self._format_currency(current_market_value),
-                        self._format_signed_currency(current_gain),
-                    ),
-                    tags=("fallback",) if used_fallback else (),
-                )
-
-            tree.grid(
-                row=0,
-                column=0,
-                sticky="nsew",
-            )
-
-            scrollbar = ttk.Scrollbar(
-                frame,
-                orient="vertical",
-                command=tree.yview,
-            )
-            scrollbar.grid(
-                row=0,
-                column=1,
-                sticky="ns",
-            )
-
-            tree.configure(
-                yscrollcommand=scrollbar.set,
-            )
-
-            ttk.Label(
-                window,
-                text="Current prices retrieved from Yahoo Finance.",
-                font=("Segoe UI", 9),
-            ).grid(
-                row=2,
-                column=0,
-                sticky="w",
-                padx=15,
-                pady=(0, 5),
-            )
-
-            ttk.Label(
-                window,
-                text="* Yahoo price unavailable — imported brokerage price used",
-                font=("Segoe UI", 9),
-                foreground="#b36b00",
-            ).grid(
-                row=3,
-                column=0,
-                sticky="w",
-                padx=15,
-                pady=(0, 5),
-            )
-
-            ttk.Button(
-                window,
-                text="Close",
-                command=window.destroy,
-            ).grid(
-                row=4,
-                column=0,
-                sticky="e",
-                padx=15,
-                pady=(0, 15),
+            show_account_holdings(
+                self,
+                account_number,
+                account_name,
+                portfolio,
+                current_holdings,
+                current_cash,
+                current_total,
+                current_daily_change,
             )
 
         except Exception as exc:
             messagebox.showerror(
-                "View Holdings",
-                f"Unable to load holdings:\n\n"
+                "Account Holdings",
+                f"Unable to load account holdings:\n\n"
                 f"{type(exc).__name__}: {exc}",
             )
+        finally:
+            if session is not None:
+                session.close()
 
     @staticmethod
     def _format_signed_quantity(
