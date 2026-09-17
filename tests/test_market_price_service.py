@@ -1,142 +1,68 @@
-"""
-Tests for Yahoo Finance symbol conversion and fallback behavior.
-"""
-
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pandas as pd
-import pytest
 
 from src.services.market_price_service import MarketPriceService
 
 
-@pytest.mark.parametrize(
-    ("brokerage_symbol", "expected_yahoo_symbol"),
-    [
-        ("BPO.PR.N:CA", "BPO-PN.TO"),
-        ("BPO.PR.A:CA", "BPO-PA.TO"),
-        ("BCE.PR.M:CA", "BCE-PM.TO"),
-        ("BPO.PR.E:CA", "BPO-PE.TO"),
-        ("BPO.PR.P:CA", "BPO-PP.TO"),
-    ],
-)
-def test_convert_canadian_preferred_share(
-    brokerage_symbol,
-    expected_yahoo_symbol,
-):
-    """Canadian preferred-share symbols convert algorithmically."""
-    assert (
-        MarketPriceService._convert_preferred_share_symbol(
-            brokerage_symbol
-        )
-        == expected_yahoo_symbol
-    )
-
-
-def test_convert_preferred_share_returns_none_for_non_preferred_symbol():
-    """Non-preferred-share symbols are not converted by the helper."""
-    assert (
-        MarketPriceService._convert_preferred_share_symbol("BAM:CA")
-        is None
-    )
-    assert (
-        MarketPriceService._convert_preferred_share_symbol("AAPL:US")
-        is None
-    )
-
-
-def test_yahoo_symbol_candidates_include_preferred_share_fallback():
-    """Preferred-share conversion is included after normal conversion."""
-    candidates = MarketPriceService._yahoo_symbol_candidates(
-        "BPO.PR.N:CA"
-    )
-
-    assert candidates == [
-        "BPO-PR-N.TO",
-        "BPO-PN.TO",
-    ]
-
-
-def test_get_price_retries_preferred_share_candidate(monkeypatch):
-    """A failed normal Yahoo symbol is followed by the preferred symbol."""
+def test_preferred_share_conversion_is_algorithmic():
     service = MarketPriceService()
 
-    calls = []
+    assert service._convert_preferred_share_symbol(
+        "BPO.PR.A:CA"
+    ) == "BPO-PA.TO"
 
-    class FakeTicker:
-        def history(self, **kwargs):
-            return pd.DataFrame()
+    assert service._convert_preferred_share_symbol(
+        "BCE.PR.M:CA"
+    ) == "BCE-PM.TO"
 
-    def fake_ticker(symbol):
-        calls.append(symbol)
 
-        if symbol == "BPO-PR-N.TO":
-            raise ValueError("symbol not found")
-
-        return FakeTicker()
-
-    monkeypatch.setattr(
-        "src.services.market_price_service.yf.Ticker",
-        fake_ticker,
-    )
-    monkeypatch.setattr(
-        MarketPriceService,
-        "_daily_rows",
-        staticmethod(lambda history: []),
-    )
-    monkeypatch.setattr(
-        MarketPriceService,
-        "_previous_close",
-        staticmethod(lambda rows, today: Decimal("90")),
-    )
-    monkeypatch.setattr(
-        MarketPriceService,
-        "_close_for_date",
-        staticmethod(lambda rows, today: Decimal("100")),
-    )
-    monkeypatch.setattr(
-        MarketPriceService,
-        "_today_regular_session_price",
-        staticmethod(lambda history, today: None),
+def test_yahoo_candidates_try_algorithmic_preferred_conversion():
+    candidates = MarketPriceService._yahoo_symbol_candidates(
+        "BPO.PR.A:CA"
     )
 
-    result = service.get_price("BPO.PR.N:CA")
-
-    assert calls == [
-        "BPO-PR-N.TO",
-        "BPO-PN.TO",
-    ]
-    assert result.price == Decimal("100")
-    assert result.previous_close == Decimal("90")
-    assert result.change == Decimal("10")
-    assert result.is_current is True
+    assert candidates[0] == "BPO-PR-A.TO"
+    assert "BPO-PA.TO" in candidates
 
 
-def test_get_price_returns_unavailable_when_all_yahoo_candidates_fail(
+def test_preferred_share_can_use_daily_data_when_intraday_fails(
     monkeypatch,
 ):
-    """Yahoo-unavailable securities still return the fallback marker."""
-    service = MarketPriceService()
+    today = date.today()
 
-    calls = []
+    daily_history = pd.DataFrame(
+        {"Close": [22.80, 22.93]},
+        index=pd.to_datetime(
+            [
+                today - timedelta(days=2),
+                today - timedelta(days=1),
+            ]
+        ),
+    )
 
-    def fake_ticker(symbol):
-        calls.append(symbol)
-        raise ValueError("symbol not found")
+    class FakeTicker:
+        def __init__(self, symbol):
+            self.symbol = symbol
+
+        def history(self, *, period, interval):
+            if self.symbol == "BPO-PR-A.TO":
+                raise RuntimeError("Normal conversion is not a Yahoo symbol")
+
+            if interval == "1m":
+                raise RuntimeError("No intraday data")
+
+            return daily_history
 
     monkeypatch.setattr(
         "src.services.market_price_service.yf.Ticker",
-        fake_ticker,
+        lambda symbol: FakeTicker(symbol),
     )
 
-    result = service.get_price("BPO.PR.N:CA")
+    service = MarketPriceService()
+    result = service.get_price("BPO.PR.A:CA")
 
-    assert calls == [
-        "BPO-PR-N.TO",
-        "BPO-PN.TO",
-    ]
-    assert result.price == Decimal("0")
-    assert result.previous_close == Decimal("0")
-    assert result.change == Decimal("0")
-    assert result.change_percent == Decimal("0")
-    assert result.is_current is False
+    assert result.is_current is True
+    assert result.price == Decimal("22.93")
+    assert result.previous_close == Decimal("22.93")

@@ -261,3 +261,55 @@ def test_newer_same_day_snapshot_replaces_existing(session):
     assert second_result.holdings_imported == 8
     assert second_result.cash_imported == 2
     assert second_result.replaced is True
+
+
+def test_force_reimport_same_timestamp_replaces_existing(session):
+    """A forced re-import replaces an existing identical snapshot."""
+    imported_account = BMOImporter(BMO_FILE).import_file()
+    service = ImportService(session)
+
+    first_result = service.import_snapshot(
+        brokerage_name="BMO",
+        imported_account=imported_account,
+        file_name="original.xlsx",
+    )
+
+    assert first_result.duplicate is False
+    assert first_result.replaced is False
+
+    original_holding = imported_account.holdings[0]
+    changed_holding = replace(
+        original_holding,
+        daily_change=Decimal("99.99"),
+    )
+
+    corrected_account = replace(
+        imported_account,
+        holdings=[changed_holding, *imported_account.holdings[1:]],
+    )
+
+    second_result = service.import_snapshot(
+        brokerage_name="BMO",
+        imported_account=corrected_account,
+        file_name="corrected.xlsx",
+        force_reimport=True,
+    )
+
+    assert second_result.duplicate is False
+    assert second_result.replaced is True
+    assert second_result.holdings_imported == 8
+    assert second_result.cash_imported == 2
+
+    holding = session.scalar(
+        select(HoldingSnapshot).where(
+            HoldingSnapshot.snapshot_date == imported_account.snapshot_date,
+            HoldingSnapshot.quantity == original_holding.quantity,
+        )
+    )
+
+    assert holding is not None
+    assert holding.daily_change == Decimal("99.99")
+
+    records = session.scalars(select(ImportRecord)).all()
+    assert len(records) == 1
+    assert records[0].file_name == "corrected.xlsx"

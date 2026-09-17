@@ -205,6 +205,21 @@ class PortfolioTab(ttk.Frame):
             padx=(15, 10),
         )
 
+        self.last_update_label = ttk.Label(
+            summary,
+            text="Last Updated: --",
+            font=("Segoe UI", 9),
+        )
+
+        self.last_update_label.grid(
+            row=1,
+            column=0,
+            columnspan=4,
+            sticky="e",
+            padx=(10, 10),
+            pady=(8, 0),
+        )
+
         # ---------------------------------------------------------
         # Brokerage summary
         # ---------------------------------------------------------
@@ -613,7 +628,17 @@ class PortfolioTab(ttk.Frame):
                     )
 
                     self.total_change_label.configure(
-                        text="Today: --"
+                        text="Today: --",
+                        foreground="black",
+                    )
+
+                    self.tsx_label.configure(
+                        text="TSX: --",
+                        foreground="black",
+                    )
+
+                    self.last_update_label.configure(
+                        text="Last Updated: --"
                     )
 
                 else:
@@ -640,23 +665,63 @@ class PortfolioTab(ttk.Frame):
                                 "Today: "
                                 f"{self._format_signed_currency(total_change)} "
                                 f"({self._format_percent(total_percent)})"
-                            )
+                            ),
+                            foreground=(
+                                "green" if total_change > 0
+                                else "red" if total_change < 0
+                                else "black"
+                            ),
                         )
 
                 # -------------------------------------------------
-                # TSX
+                # TSX and last update
                 # -------------------------------------------------
 
-                if tsx_change is not None:
+                # These values are persisted in the consolidated snapshot.
+                # On application startup there is no valuation service in
+                # memory, so do not depend on the transient tsx_change
+                # argument here.
+                saved_tsx = getattr(
+                    consolidated,
+                    "tsx_daily_change_percent",
+                    None,
+                )
+
+                if saved_tsx is None:
+                    self.tsx_label.configure(
+                        text="TSX: --",
+                        foreground="black",
+                    )
+                else:
+                    saved_tsx = Decimal(str(saved_tsx))
                     self.tsx_label.configure(
                         text=(
                             "TSX: "
-                            f"{self._format_percent(tsx_change)}"
-                        )
+                            f"{self._format_percent(saved_tsx)}"
+                        ),
+                        foreground=(
+                            "green" if saved_tsx > 0
+                            else "red" if saved_tsx < 0
+                            else "black"
+                        ),
+                    )
+
+                updated_at = getattr(
+                    consolidated,
+                    "valuation_updated_at",
+                    None,
+                )
+
+                if updated_at is None:
+                    self.last_update_label.configure(
+                        text="Last Updated: --"
                     )
                 else:
-                    self.tsx_label.configure(
-                        text="TSX: --"
+                    self.last_update_label.configure(
+                        text=(
+                            "Last Updated: "
+                            f"{updated_at.strftime('%Y-%m-%d %I:%M:%S %p')}"
+                        )
                     )
 
                 # -------------------------------------------------
@@ -896,16 +961,24 @@ class PortfolioTab(ttk.Frame):
                 return
 
             valuation_service = PortfolioValuationService(session)
-            symbols = {"CAD=X"}
-            symbols.update(holding.symbol for holding in portfolio.holdings)
-            valuation_service._prepare_price_cache(symbols)
+            cached_values = valuation_service.get_cached_current_values(
+                account_id
+            )
+
+            if cached_values is None:
+                messagebox.showinfo(
+                    "Account Holdings",
+                    "No calculated portfolio valuation is available yet. "
+                    "Click 'Update Portfolio' first.",
+                )
+                return
 
             (
                 current_holdings,
                 current_cash,
                 current_total,
                 current_daily_change,
-            ) = valuation_service.calculate_current_values(portfolio)
+            ) = cached_values
 
             show_account_holdings(
                 self,

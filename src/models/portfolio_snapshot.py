@@ -2,17 +2,17 @@
 Portfolio snapshot database model.
 """
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, ForeignKey, Numeric
+from sqlalchemy import Date, DateTime, ForeignKey, Numeric, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base
 
 
 class PortfolioSnapshot(Base):
-    """Represents the value of an account or consolidated portfolio."""
+    """Represents a calculated value of an account or consolidated portfolio."""
 
     __tablename__ = "portfolio_snapshots"
 
@@ -34,9 +34,34 @@ class PortfolioSnapshot(Base):
     )
 
     daily_change: Mapped[Decimal | None] = mapped_column(
-        Numeric(20, 6), nullable=True,
+        Numeric(20, 6),
+        nullable=True,
     )
 
     daily_change_percent: Mapped[Decimal | None] = mapped_column(
-        Numeric(20, 6), nullable=True,
+        Numeric(20, 6),
+        nullable=True,
+    )
+
+    tsx_daily_change_percent: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 6),
+        nullable=True,
+    )
+
+    usd_to_cad: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 8),
+        nullable=True,
+    )
+
+    valuation_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    # JSON text containing the calculated holding and cash valuations for
+    # this snapshot. It is deliberately separate from imported brokerage
+    # facts so historical imports remain unchanged.
+    valuation_data: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
     )

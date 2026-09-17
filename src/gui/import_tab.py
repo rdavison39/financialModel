@@ -18,7 +18,7 @@ class ImportTab(ttk.Frame):
         super().__init__(parent)
 
         self.columnconfigure(1, weight=1)
-        self.rowconfigure(5, weight=1)
+        self.rowconfigure(8, weight=1)
 
         # ---------------------------------------------------------
         # Title
@@ -141,6 +141,40 @@ class ImportTab(ttk.Frame):
         )
 
         # ---------------------------------------------------------
+        # Re-import option
+        # ---------------------------------------------------------
+
+        self.force_reimport = tk.BooleanVar(value=False)
+
+        ttk.Checkbutton(
+            self,
+            text="Force re-import existing snapshots",
+            variable=self.force_reimport,
+        ).grid(
+            row=5,
+            column=0,
+            columnspan=3,
+            sticky="w",
+            pady=(0, 5),
+        )
+
+        ttk.Label(
+            self,
+            text=(
+                "Use this after correcting an import. It replaces an "
+                "existing snapshot even when the source timestamp is "
+                "unchanged."
+            ),
+            wraplength=700,
+        ).grid(
+            row=6,
+            column=0,
+            columnspan=3,
+            sticky="w",
+            pady=(0, 15),
+        )
+
+        # ---------------------------------------------------------
         # Results
         # ---------------------------------------------------------
 
@@ -149,7 +183,7 @@ class ImportTab(ttk.Frame):
             text="Import Results",
             font=("Segoe UI", 13, "bold"),
         ).grid(
-            row=5,
+            row=7,
             column=0,
             columnspan=3,
             sticky="nw",
@@ -158,7 +192,7 @@ class ImportTab(ttk.Frame):
 
         results_frame = ttk.Frame(self)
         results_frame.grid(
-            row=6,
+            row=8,
             column=0,
             columnspan=3,
             sticky="nsew",
@@ -198,7 +232,7 @@ class ImportTab(ttk.Frame):
         )
 
         # Make the results area expand.
-        self.rowconfigure(6, weight=1)
+        self.rowconfigure(8, weight=1)
 
     # -------------------------------------------------------------
     # Directory selection
@@ -286,11 +320,13 @@ class ImportTab(ttk.Frame):
 
                 if brokerage == "BMO":
                     result = service.import_bmo_directory(
-                        directory_path
+                        directory_path,
+                        force_reimport=self.force_reimport.get(),
                     )
                 else:
                     result = service.import_nesbitt_directory(
-                        directory_path
+                        directory_path,
+                        force_reimport=self.force_reimport.get(),
                     )
 
             finally:
@@ -328,6 +364,7 @@ class ImportTab(ttk.Frame):
             f"Directory: {directory}",
             f"Files found: {result.files_found}",
             f"Imported: {result.imported}",
+            f"Replaced: {result.replaced}",
             f"Duplicates: {result.duplicates}",
             f"Errors: {result.errors}",
         ]

@@ -35,23 +35,27 @@ class BulkImportService:
     def import_bmo_directory(
         self,
         directory: str | Path,
+        force_reimport: bool = False,
     ) -> BulkImportResult:
         """Import all BMO Excel files in a directory."""
         return self._import_directory(
             directory=directory,
             brokerage_name="BMO",
             importer_class=BMOImporter,
+            force_reimport=force_reimport,
         )
 
     def import_nesbitt_directory(
         self,
         directory: str | Path,
+        force_reimport: bool = False,
     ) -> BulkImportResult:
         """Import all Nesbitt Burns Excel files in a directory."""
         return self._import_directory(
             directory=directory,
             brokerage_name="Nesbitt Burns",
             importer_class=NesbittImporter,
+            force_reimport=force_reimport,
         )
 
     def _import_directory(
@@ -59,6 +63,7 @@ class BulkImportService:
         directory: str | Path,
         brokerage_name: str,
         importer_class,
+        force_reimport: bool = False,
     ) -> BulkImportResult:
         """Import all Excel files from a directory."""
         directory_path = Path(directory)
@@ -96,6 +101,7 @@ class BulkImportService:
                     brokerage_name=brokerage_name,
                     imported_account=imported_account,
                     file_name=file_path.name,
+                    force_reimport=force_reimport,
                 )
 
                 if result.duplicate:

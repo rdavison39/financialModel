@@ -790,16 +790,24 @@ class AccountsTab(ttk.Frame):
                 return
 
             valuation_service = PortfolioValuationService(session)
-            symbols = {"CAD=X"}
-            symbols.update(holding.symbol for holding in portfolio.holdings)
-            valuation_service._prepare_price_cache(symbols)
+            cached_values = valuation_service.get_cached_current_values(
+                account_id
+            )
+
+            if cached_values is None:
+                messagebox.showinfo(
+                    "Account Holdings",
+                    "No calculated portfolio valuation is available yet. "
+                    "Click 'Update Portfolio' first.",
+                )
+                return
 
             (
                 current_holdings,
                 current_cash,
                 current_total,
                 current_daily_change,
-            ) = valuation_service.calculate_current_values(portfolio)
+            ) = cached_values
 
             values = self.accounts_tree.item(str(account_id), "values")
             account_number = str(values[1]) if len(values) > 1 else str(account_id)

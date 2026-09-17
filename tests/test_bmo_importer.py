@@ -101,3 +101,30 @@ def test_bmo_importer_reads_holding_details():
 
     # The current BMO fixture contains this additional preferred share.
     assert "BCE.PR.M:CA" in holdings
+
+
+def test_bmo_importer_does_not_depend_on_fixed_holdings_row(tmp_path):
+    """The holdings section can move without breaking the importer."""
+    from openpyxl import load_workbook
+
+    source = load_workbook(BMO_FILE)
+    worksheet = source["Holdings"]
+
+    # Move the Holding Details section down by three rows while leaving
+    # the report header and cash section unchanged.
+    worksheet.insert_rows(9, amount=3)
+
+    moved_file = tmp_path / "Bmo-moved.xlsx"
+    source.save(moved_file)
+
+    result = BMOImporter(moved_file).import_file()
+
+    assert len(result.holdings) == 8
+
+    # The test is verifying that the importer still finds the complete
+    # holdings section after it has moved. It should not depend on the
+    # order in which BMO presents the securities.
+    symbols = [holding.symbol for holding in result.holdings]
+
+    assert "BAM:CA" in symbols
+    assert "BCE.PR.M:CA" in symbols

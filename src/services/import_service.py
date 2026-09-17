@@ -8,6 +8,8 @@ Import rules:
     - A same-day import with a newer source timestamp replaces the
       existing snapshot and all of its holding/cash rows.
     - A different calendar day creates a new historical snapshot.
+    - A forced re-import replaces an existing snapshot even when its
+      source timestamp is identical.
 """
 
 from dataclasses import dataclass
@@ -49,6 +51,7 @@ class ImportService:
         brokerage_name: str,
         imported_account,
         file_name: str,
+        force_reimport: bool = False,
     ) -> ImportResult:
         """
         Import one complete brokerage account snapshot.
@@ -83,8 +86,13 @@ class ImportService:
 
         if existing_import is not None:
             # Same or older source report: the existing snapshot remains
-            # authoritative.
-            if snapshot_timestamp <= existing_import.snapshot_date:
+            # authoritative unless an explicit force re-import was requested.
+            # A force re-import is intended for correcting a previously
+            # imported snapshot after fixing the importer or source data.
+            if (
+                not force_reimport
+                and snapshot_timestamp <= existing_import.snapshot_date
+            ):
                 return ImportResult(
                     account_number=imported_account.account_number,
                     snapshot_date=snapshot_timestamp,
@@ -94,8 +102,9 @@ class ImportService:
                     replaced=False,
                 )
 
-            # Newer report for the same calendar day: remove the old
-            # snapshot completely before storing the new source of truth.
+            # Newer report for the same calendar day, or an explicit force
+            # re-import: remove the old snapshot completely before storing
+            # the new source of truth.
             self._delete_snapshot_rows(
                 account_id=account.id,
                 snapshot_timestamp=existing_import.snapshot_date,

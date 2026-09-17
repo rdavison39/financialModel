@@ -115,3 +115,25 @@ def test_bad_file_does_not_stop_directory_import(session, tmp_path):
     ]
 
     assert session.query(HoldingSnapshot).count() == 8
+
+
+def test_force_reimport_replaces_existing_snapshot(session, tmp_path):
+    """Bulk import can explicitly replace an identical snapshot."""
+    source_file = tmp_path / "Bmo-1.xlsx"
+    source_file.write_bytes(BMO_FILE.read_bytes())
+
+    service = BulkImportService(session)
+
+    first_result = service.import_bmo_directory(tmp_path)
+    second_result = service.import_bmo_directory(
+        tmp_path,
+        force_reimport=True,
+    )
+
+    assert first_result.imported == 1
+    assert first_result.replaced == 0
+    assert second_result.imported == 0
+    assert second_result.replaced == 1
+    assert second_result.duplicates == 0
+    assert second_result.errors == 0
+    assert session.query(HoldingSnapshot).count() == 8
