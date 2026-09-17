@@ -3,9 +3,8 @@ Portfolio tab for the Financial Model GUI.
 """
 
 import tkinter as tk
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from tkinter import font as tkfont
 from tkinter import messagebox, simpledialog, ttk
 
 from sqlalchemy import select, func
@@ -15,6 +14,7 @@ from src.database_init import initialize_database
 from src.models.account import Account
 from src.models.brokerage import Brokerage
 from src.models.portfolio_snapshot import PortfolioSnapshot
+from src.models.holding_snapshot import HoldingSnapshot
 from src.services.portfolio_service import PortfolioService
 from src.services.portfolio_valuation_service import (
     PortfolioValuationService,
@@ -29,9 +29,6 @@ class PortfolioTab(ttk.Frame):
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(5, weight=1)
-
-        self._today_cell_labels: dict[tk.Misc, dict[str, tk.Label]] = {}
-        self._today_cell_data: dict[tk.Misc, dict[str, tuple[str, str]]] = {}
 
         self._build_ui()
 
@@ -237,6 +234,19 @@ class PortfolioTab(ttk.Frame):
             height=3,
         )
 
+        self.brokerage_tree.tag_configure(
+            "today_positive",
+            foreground="green",
+        )
+        self.brokerage_tree.tag_configure(
+            "today_negative",
+            foreground="red",
+        )
+        self.brokerage_tree.tag_configure(
+            "today_zero",
+            foreground="black",
+        )
+
         self.brokerage_tree.heading(
             "brokerage",
             text="Brokerage",
@@ -251,6 +261,7 @@ class PortfolioTab(ttk.Frame):
             "today",
             text="Today",
         )
+
 
         self.brokerage_tree.column(
             "brokerage",
@@ -269,11 +280,12 @@ class PortfolioTab(ttk.Frame):
 
         self.brokerage_tree.column(
             "today",
-            width=190,
-            minwidth=170,
+            width=300,
+            minwidth=260,
             anchor="e",
-            stretch=False,
+            stretch=True,
         )
+
 
         self.brokerage_tree.grid(
             row=0,
@@ -294,9 +306,7 @@ class PortfolioTab(ttk.Frame):
         )
 
         self.brokerage_tree.configure(
-            yscrollcommand=lambda *args: self._tree_scroll(
-                self.brokerage_tree, brokerage_scrollbar, args
-            ),
+            yscrollcommand=brokerage_scrollbar.set,
         )
 
         # ---------------------------------------------------------
@@ -332,6 +342,19 @@ class PortfolioTab(ttk.Frame):
             height=10,
         )
 
+        self.accounts_tree.tag_configure(
+            "today_positive",
+            foreground="green",
+        )
+        self.accounts_tree.tag_configure(
+            "today_negative",
+            foreground="red",
+        )
+        self.accounts_tree.tag_configure(
+            "today_zero",
+            foreground="black",
+        )
+
         self.accounts_tree.heading(
             "brokerage",
             text="Brokerage",
@@ -357,6 +380,7 @@ class PortfolioTab(ttk.Frame):
             text="Today",
         )
 
+
         self.accounts_tree.heading(
             "roi",
             text="ROI",
@@ -380,9 +404,9 @@ class PortfolioTab(ttk.Frame):
 
         self.accounts_tree.column(
             "name",
-            width=105,
-            minwidth=90,
-            stretch=False,
+            width=145,
+            minwidth=120,
+            stretch=True,
         )
 
         self.accounts_tree.column(
@@ -395,11 +419,12 @@ class PortfolioTab(ttk.Frame):
 
         self.accounts_tree.column(
             "today",
-            width=185,
-            minwidth=165,
+            width=225,
+            minwidth=210,
             anchor="e",
-            stretch=False,
+            stretch=True,
         )
+
 
         self.accounts_tree.column(
             "roi",
@@ -442,154 +467,13 @@ class PortfolioTab(ttk.Frame):
         )
 
         self.accounts_tree.configure(
-            yscrollcommand=lambda *args: self._tree_scroll(
-                self.accounts_tree, accounts_scrollbar, args
-            ),
+            yscrollcommand=accounts_scrollbar.set,
         )
 
         self.accounts_tree.bind(
             "<Double-1>",
             self._open_account_holdings,
         )
-        self.accounts_tree.bind(
-            "<<TreeviewSelect>>",
-            lambda _event: self._position_today_cells(
-                self.accounts_tree, "today"
-            ),
-        )
-        self.brokerage_tree.bind(
-            "<<TreeviewSelect>>",
-            lambda _event: self._position_today_cells(
-                self.brokerage_tree, "today"
-            ),
-        )
-        self.accounts_tree.bind(
-            "<Configure>",
-            lambda _event: self._position_today_cells(
-                self.accounts_tree, "today"
-            ),
-        )
-        self.brokerage_tree.bind(
-            "<Configure>",
-            lambda _event: self._position_today_cells(
-                self.brokerage_tree, "today"
-            ),
-        )
-
-    # =============================================================
-    # Today cell colours
-    # =============================================================
-
-    @staticmethod
-    def _change_color(change: Decimal | None) -> str:
-        """Return the colour for a daily change."""
-        if change is None or Decimal(str(change)) == 0:
-            return "black"
-        return "green" if Decimal(str(change)) > 0 else "red"
-
-    def _tree_scroll(self, tree, scrollbar, args) -> None:
-        """Update a scrollbar and reposition cell overlays after scrolling."""
-        scrollbar.set(*args)
-        self.after_idle(lambda: self._position_today_cells(tree))
-
-    def _set_today_cell_data(
-        self,
-        tree,
-        iid: str,
-        column: str,
-        text: str,
-        foreground: str,
-    ) -> None:
-        """Store display data for a single coloured Treeview cell."""
-        data = self._today_cell_data.setdefault(tree, {})
-        data[f"{iid}:{column}"] = (text, foreground)
-
-    def _position_today_cells(self, tree, column: str | None = None) -> None:
-        """Draw coloured labels over the Today cells of a Treeview."""
-        if not tree.winfo_exists():
-            return
-
-        data = self._today_cell_data.get(tree, {})
-        labels = self._today_cell_labels.setdefault(tree, {})
-
-        columns = [column] if column else [
-            "today",
-            "today_percent",
-        ]
-
-        tree_bg = ttk.Style().lookup("Treeview", "fieldbackground") or "white"
-        selected_bg = ttk.Style().lookup(
-            "Treeview", "selectbackground"
-        ) or "#4a6984"
-        selected_fg = ttk.Style().lookup(
-            "Treeview", "selectforeground"
-        ) or "white"
-
-        for key, label in list(labels.items()):
-            if not any(key.endswith(f":{col}") for col in columns):
-                continue
-            label.place_forget()
-
-        for iid in tree.get_children():
-            for col in columns:
-                key = f"{iid}:{col}"
-                if key not in data:
-                    continue
-
-                bbox = tree.bbox(iid, col)
-                if not bbox:
-                    continue
-
-                x, y, width, height = bbox
-                text, foreground = data[key]
-                selected = iid in tree.selection()
-
-                label = labels.get(key)
-                if label is None or not label.winfo_exists():
-                    label = tk.Label(
-                        tree,
-                        text=text,
-                        anchor="e",
-                        padx=4,
-                        bd=0,
-                        relief="flat",
-                        font=tkfont.nametofont("TkDefaultFont"),
-                    )
-                    label.bind(
-                        "<Button-1>",
-                        lambda event, item=iid, tv=tree: self._select_tree_item(
-                            tv, item
-                        ),
-                    )
-                    labels[key] = label
-
-                label.configure(
-                    text=text,
-                    fg=foreground,
-                    bg=selected_bg if selected else tree_bg,
-                )
-                if selected:
-                    label.configure(fg=foreground)
-                label.place(
-                    x=x,
-                    y=y,
-                    width=width,
-                    height=height,
-                )
-
-    def _select_tree_item(self, tree, iid: str) -> None:
-        """Select a Treeview item when its Today overlay is clicked."""
-        tree.selection_set(iid)
-        tree.focus(iid)
-        self._position_today_cells(tree)
-
-    def _destroy_today_cell_labels(self, tree) -> None:
-        """Clean up Today cell overlays when a Treeview is destroyed."""
-        labels = self._today_cell_labels.pop(tree, {})
-        for label in labels.values():
-            if label.winfo_exists():
-                label.destroy()
-        self._today_cell_data.pop(tree, None)
 
     # =============================================================
     # Update
@@ -647,6 +531,11 @@ class PortfolioTab(ttk.Frame):
                     f"{self._format_currency(total_value)}"
                 )
             )
+
+            # Notify the Accounts tab that the portfolio snapshots have
+            # been updated.  Accounts listens for this event and reloads
+            # its values automatically, so a manual Refresh is not needed.
+            self.event_generate("<<PortfolioUpdated>>", when="tail")
 
         except Exception as exc:
             self.progress_label.configure(
@@ -750,8 +639,7 @@ class PortfolioTab(ttk.Frame):
                                 "Today: "
                                 f"{self._format_signed_currency(total_change)} "
                                 f"({self._format_percent(total_percent)})"
-                            ),
-                            foreground=self._change_color(total_change),
+                            )
                         )
 
                 # -------------------------------------------------
@@ -862,12 +750,12 @@ class PortfolioTab(ttk.Frame):
                     f"({self._format_percent(change_percent)})"
                 )
 
-            if tsx_change is None:
-                tsx_text = "--"
+            if change is None or change == 0:
+                today_tag = "today_zero"
+            elif change > 0:
+                today_tag = "today_positive"
             else:
-                tsx_text = self._format_percent(
-                    tsx_change
-                )
+                today_tag = "today_negative"
 
             self.accounts_tree.insert(
                 "",
@@ -881,19 +769,8 @@ class PortfolioTab(ttk.Frame):
                     today_text,
                     self._format_percent(roi),
                 ),
+                tags=(today_tag,),
             )
-
-            self._set_today_cell_data(
-                self.accounts_tree,
-                str(account.id),
-                "today",
-                today_text,
-                self._change_color(change),
-            )
-
-        self.after_idle(
-            lambda: self._position_today_cells(self.accounts_tree, "today")
-        )
 
     # =============================================================
     # Display brokerages
@@ -904,7 +781,8 @@ class PortfolioTab(ttk.Frame):
         session,
         tsx_change: Decimal | None,
     ) -> None:
-        """Display consolidated live Yahoo values by brokerage."""
+        """Display current values and live daily changes by brokerage."""
+
         for item in self.brokerage_tree.get_children():
             self.brokerage_tree.delete(item)
 
@@ -917,47 +795,71 @@ class PortfolioTab(ttk.Frame):
                 func.sum(PortfolioSnapshot.total_value),
                 func.sum(PortfolioSnapshot.daily_change),
             )
-            .join(Account, Account.brokerage_id == Brokerage.id)
+            .join(
+                Account,
+                Account.brokerage_id == Brokerage.id,
+            )
             .join(
                 PortfolioSnapshot,
                 PortfolioSnapshot.account_id == Account.id,
             )
-            .where(PortfolioSnapshot.snapshot_date == today)
-            .group_by(Brokerage.id, Brokerage.name)
-            .order_by(Brokerage.name)
+            .where(
+                PortfolioSnapshot.snapshot_date == today,
+            )
+            .group_by(
+                Brokerage.id,
+                Brokerage.name,
+            )
+            .order_by(
+                Brokerage.name,
+            )
         ).all()
 
-        for _brokerage_id, brokerage_name, value, change in rows:
+        for (
+            brokerage_id,
+            brokerage_name,
+            value,
+            change_value,
+        ) in rows:
             value = Decimal(str(value or 0))
-            change = Decimal(str(change or 0))
-            percent = self._daily_change_percent(value, change)
+
+            if change_value is None:
+                change = None
+                change_percent = None
+            else:
+                change = Decimal(str(change_value))
+                previous_value = value - change
+                change_percent = (
+                    change / previous_value * Decimal("100")
+                    if previous_value != 0
+                    else Decimal("0")
+                )
 
             today_text = (
-                f"{self._format_signed_currency(change)} "
-                f"({self._format_percent(percent)})"
+                "--"
+                if change is None
+                else (
+                    f"{self._format_signed_currency(change)} "
+                    f"({self._format_percent(change_percent)})"
+                )
             )
 
-            iid = self.brokerage_tree.insert(
+            tsx_text = (
+                "--"
+                if tsx_change is None
+                else self._format_percent(tsx_change)
+            )
+
+            self.brokerage_tree.insert(
                 "",
                 "end",
                 values=(
                     brokerage_name,
                     self._format_currency(value),
                     today_text,
+                    tsx_text,
                 ),
             )
-
-            self._set_today_cell_data(
-                self.brokerage_tree,
-                iid,
-                "today",
-                today_text,
-                self._change_color(change),
-            )
-
-        self.after_idle(
-            lambda: self._position_today_cells(self.brokerage_tree, "today")
-        )
 
     # =============================================================
     # Account holdings
@@ -995,13 +897,6 @@ class PortfolioTab(ttk.Frame):
                 )
                 return
 
-            account_snapshot = session.scalar(
-                select(PortfolioSnapshot).where(
-                    PortfolioSnapshot.account_id == account_id,
-                    PortfolioSnapshot.snapshot_date == date.today(),
-                )
-            )
-
             holdings_window = tk.Toplevel(self)
             holdings_window.title(
                 f"Account Holdings - {account_number}"
@@ -1009,12 +904,27 @@ class PortfolioTab(ttk.Frame):
             holdings_window.geometry("1450x700")
             holdings_window.minsize(1100, 550)
 
+            valuation_service = PortfolioValuationService(session)
+            symbols = {"CAD=X"}
+            symbols.update(holding.symbol for holding in portfolio.holdings)
+            valuation_service._prepare_price_cache(symbols)
+
+            (
+                current_holdings,
+                current_cash,
+                current_total,
+                current_daily_change,
+            ) = valuation_service.calculate_current_values(portfolio)
+
             self._build_account_holdings_window(
                 holdings_window,
                 account_number,
                 account_name,
                 portfolio,
-                account_snapshot,
+                current_holdings,
+                current_cash,
+                current_total,
+                current_daily_change,
             )
 
         except Exception as exc:
@@ -1033,12 +943,15 @@ class PortfolioTab(ttk.Frame):
         account_number: str,
         account_name: str,
         portfolio,
-        account_snapshot: PortfolioSnapshot | None,
+        current_holdings,
+        current_cash,
+        current_total,
+        current_daily_change,
     ) -> None:
         """Build the account holdings window."""
 
         window.columnconfigure(0, weight=1)
-        window.rowconfigure(2, weight=1)
+        window.rowconfigure(3, weight=1)
 
         header = ttk.Frame(window)
         header.grid(
@@ -1080,45 +993,46 @@ class PortfolioTab(ttk.Frame):
             pady=(0, 10),
         )
 
-        # The account's market value must be the exact same value shown
-        # on the main Portfolio screen.  PortfolioSnapshot.total_value
-        # includes both securities and cash, whereas summing holdings alone
-        # excludes cash.
-        if account_snapshot is not None:
-            total_market_value = Decimal(
-                str(account_snapshot.total_value)
-            )
-        else:
-            total_market_value = sum(
-                (
-                    holding.current_market_value
-                    if holding.current_market_value is not None
-                    else holding.market_value
-                    for holding in portfolio.holdings
-                ),
-                Decimal("0"),
-            )
+        current_by_symbol = {
+            item.symbol: item for item in current_holdings
+        }
 
+        total_market_value = current_total
+
+        # Cost basis is retained from the brokerage snapshot.  Calculating
+        # it as market value minus brokerage unrealized gain also handles
+        # option contract multipliers correctly.
         total_cost = sum(
             (
-                holding.average_cost * holding.quantity
+                holding.market_value
+                - (holding.unrealized_gain or Decimal("0"))
                 for holding in portfolio.holdings
             ),
             Decimal("0"),
         )
 
-        total_unrealized_gain = sum(
-            (
-                holding.unrealized_gain
-                for holding in portfolio.holdings
-            ),
-            Decimal("0"),
-        )
-
+        total_unrealized_gain = total_market_value - total_cost
         total_gain_percent = (
             total_unrealized_gain / total_cost * Decimal("100")
             if total_cost != 0
             else Decimal("0")
+        )
+
+        total_daily_change = current_daily_change
+        previous_close_value = total_market_value - total_daily_change
+        total_daily_change_percent = (
+            total_daily_change / previous_close_value * Decimal("100")
+            if previous_close_value != 0
+            else Decimal("0")
+        )
+        total_daily_change_text = (
+            f"{self._format_signed_currency(total_daily_change)} "
+            f"({self._format_percent(total_daily_change_percent)})"
+        )
+
+        total_cash_cad = sum(
+            (item.current_cad_value for item in current_cash),
+            Decimal("0"),
         )
 
         summary.columnconfigure(1, weight=1)
@@ -1136,26 +1050,7 @@ class PortfolioTab(ttk.Frame):
                     f"({self._format_percent(total_gain_percent)})"
                 ),
             ),
-            (
-                "Today:",
-                (
-                    self._format_signed_currency(
-                        Decimal(str(account_snapshot.daily_change))
-                    )
-                    if account_snapshot is not None
-                    and account_snapshot.daily_change is not None
-                    else self._format_signed_currency(
-                        sum(
-                            (
-                                holding.current_daily_change
-                                or Decimal("0")
-                                for holding in portfolio.holdings
-                            ),
-                            Decimal("0"),
-                        )
-                    )
-                ),
-            ),
+            ("Today:", total_daily_change_text),
         )
 
         for column, (label, value) in enumerate(summary_items):
@@ -1172,42 +1067,75 @@ class PortfolioTab(ttk.Frame):
                 padx=(5, 5),
             )
 
-            value_label = ttk.Label(
+            ttk.Label(
                 summary,
                 text=value,
                 font=("Segoe UI", 11, "bold"),
-            )
-            if label == "Today:":
-                today_change = (
-                    Decimal(str(account_snapshot.daily_change))
-                    if account_snapshot is not None
-                    and account_snapshot.daily_change is not None
-                    else sum(
-                        (
-                            holding.current_daily_change
-                            or Decimal("0")
-                            for holding in portfolio.holdings
-                        ),
-                        Decimal("0"),
-                    )
-                )
-                value_label.configure(
-                    foreground=self._change_color(today_change)
-                )
-            value_label.grid(
+            ).grid(
                 row=0,
                 column=base + 1,
                 sticky="w",
                 padx=(0, 20),
             )
 
+        # -------------------------------------------------------------
+        # Cash
+        # -------------------------------------------------------------
+        cash_frame = ttk.LabelFrame(
+            window,
+            text="Cash",
+            padding=8,
+        )
+        cash_frame.grid(
+            row=2,
+            column=0,
+            sticky="ew",
+            padx=15,
+            pady=(0, 10),
+        )
+        cash_frame.columnconfigure(0, weight=1)
+
+        cash_tree = ttk.Treeview(
+            cash_frame,
+            columns=("currency", "amount", "cad_value"),
+            show="headings",
+            height=max(1, len(current_cash)),
+        )
+        cash_tree.heading("currency", text="Currency")
+        cash_tree.heading("amount", text="Amount")
+        cash_tree.heading("cad_value", text="CAD Value")
+        cash_tree.column("currency", width=120, anchor="center", stretch=False)
+        cash_tree.column("amount", width=180, anchor="e", stretch=False)
+        cash_tree.column("cad_value", width=180, anchor="e", stretch=False)
+        cash_tree.grid(row=0, column=0, sticky="ew")
+
+        for item in current_cash:
+            cash_tree.insert(
+                "",
+                "end",
+                values=(
+                    item.currency,
+                    self._format_currency(item.amount),
+                    self._format_currency(item.current_cad_value),
+                ),
+            )
+
+        ttk.Label(
+            cash_frame,
+            text=f"Total Cash (CAD): {self._format_currency(total_cash_cad)}",
+            font=("Segoe UI", 10, "bold"),
+        ).grid(row=1, column=0, sticky="e", pady=(6, 0))
+
+        # -------------------------------------------------------------
+        # Holdings
+        # -------------------------------------------------------------
         frame = ttk.LabelFrame(
             window,
             text="Holdings",
             padding=8,
         )
         frame.grid(
-            row=2,
+            row=3,
             column=0,
             sticky="nsew",
             padx=15,
@@ -1228,8 +1156,8 @@ class PortfolioTab(ttk.Frame):
                 "market_value",
                 "unrealized_gain",
                 "unrealized_gain_percent",
-                "today",
-                "today_percent",
+                "daily_change",
+                "daily_change_percent",
             ),
             show="headings",
         )
@@ -1243,8 +1171,8 @@ class PortfolioTab(ttk.Frame):
             "market_value": "Market Value",
             "unrealized_gain": "Unrealized Gain",
             "unrealized_gain_percent": "Gain %",
-            "today": "Today",
-            "today_percent": "Today %",
+            "daily_change": "Today",
+            "daily_change_percent": "Today %",
         }
 
         for column, heading in headings.items():
@@ -1294,17 +1222,18 @@ class PortfolioTab(ttk.Frame):
             anchor="e",
             stretch=False,
         )
+
         tree.column(
-            "today",
-            width=145,
-            minwidth=125,
+            "daily_change",
+            width=140,
+            minwidth=120,
             anchor="e",
             stretch=False,
         )
         tree.column(
-            "today_percent",
-            width=90,
-            minwidth=80,
+            "daily_change_percent",
+            width=100,
+            minwidth=90,
             anchor="e",
             stretch=False,
         )
@@ -1313,32 +1242,56 @@ class PortfolioTab(ttk.Frame):
             portfolio.holdings,
             key=lambda item: item.symbol,
         ):
-            cost = holding.average_cost * holding.quantity
+            current = current_by_symbol.get(holding.symbol)
+            current_price = (
+                current.current_price if current is not None else holding.price
+            )
+            current_market_value = (
+                current.current_market_value
+                if current is not None
+                else holding.market_value
+            )
 
-            gain_percent = (
-                holding.unrealized_gain / cost * Decimal("100")
+            # Keep the brokerage cost basis, but calculate current unrealized
+            # gain from the live current market value.
+            cost = holding.market_value - (
+                holding.unrealized_gain or Decimal("0")
+            )
+            current_gain = current_market_value - cost
+            current_gain_percent = (
+                current_gain / cost * Decimal("100")
                 if cost != 0
                 else Decimal("0")
             )
 
             quantity_text = f"{holding.quantity:,.6f}".rstrip("0").rstrip(".")
 
-            today_value = (
-                self._format_signed_currency(
-                    holding.current_daily_change
-                )
-                if holding.current_daily_change is not None
-                else "--"
+            current_daily_change = (
+                current.daily_change
+                if current is not None
+                else Decimal("0")
             )
-            today_percent_value = (
-                self._format_percent(
-                    holding.current_daily_change_percent
-                )
-                if holding.current_daily_change_percent is not None
-                else "--"
+            current_daily_change_percent = (
+                current.daily_change_percent
+                if current is not None
+                else Decimal("0")
             )
 
-            iid = tree.insert(
+            daily_change_text = self._format_signed_currency(
+                current_daily_change
+            )
+            daily_change_percent_text = self._format_percent(
+                current_daily_change_percent
+            )
+
+            if current_daily_change == 0:
+                today_tag = "today_zero"
+            elif current_daily_change > 0:
+                today_tag = "today_positive"
+            else:
+                today_tag = "today_negative"
+
+            tree.insert(
                 "",
                 "end",
                 values=(
@@ -1346,39 +1299,28 @@ class PortfolioTab(ttk.Frame):
                     holding.company_name,
                     quantity_text,
                     self._format_currency(holding.average_cost),
-                    self._format_currency(
-                        holding.current_price
-                        if holding.current_price is not None
-                        else holding.price
-                    ),
-                    self._format_currency(
-                        holding.current_market_value
-                        if holding.current_market_value is not None
-                        else holding.market_value
-                    ),
-                    self._format_signed_currency(
-                        holding.unrealized_gain
-                    ),
-                    self._format_percent(gain_percent),
-                    today_value,
-                    today_percent_value,
+                    self._format_currency(current_price),
+                    self._format_currency(current_market_value),
+                    self._format_signed_currency(current_gain),
+                    self._format_percent(current_gain_percent),
+                    daily_change_text,
+                    daily_change_percent_text,
                 ),
+                tags=(today_tag,),
             )
 
-            self._set_today_cell_data(
-                tree,
-                iid,
-                "today",
-                today_value,
-                self._change_color(holding.current_daily_change),
-            )
-            self._set_today_cell_data(
-                tree,
-                iid,
-                "today_percent",
-                today_percent_value,
-                self._change_color(holding.current_daily_change),
-            )
+        tree.tag_configure(
+            "today_positive",
+            foreground="green",
+        )
+        tree.tag_configure(
+            "today_negative",
+            foreground="red",
+        )
+        tree.tag_configure(
+            "today_zero",
+            foreground="black",
+        )
 
         tree.grid(
             row=0,
@@ -1398,32 +1340,12 @@ class PortfolioTab(ttk.Frame):
         )
 
         tree.configure(
-            yscrollcommand=lambda *args: self._tree_scroll(
-                tree, scrollbar, args
-            ),
-        )
-
-        tree.bind(
-            "<Configure>",
-            lambda _event: self._position_today_cells(tree),
-        )
-        tree.bind(
-            "<<TreeviewSelect>>",
-            lambda _event: self._position_today_cells(tree),
-        )
-
-        tree.bind(
-            "<Destroy>",
-            lambda _event: self._destroy_today_cell_labels(tree),
-        )
-
-        self.after_idle(
-            lambda: self._position_today_cells(tree)
+            yscrollcommand=scrollbar.set,
         )
 
         close_frame = ttk.Frame(window)
         close_frame.grid(
-            row=3,
+            row=4,
             column=0,
             sticky="e",
             padx=15,
@@ -1528,43 +1450,75 @@ class PortfolioTab(ttk.Frame):
         account_id: int | None,
         session=None,
     ) -> tuple[Decimal | None, Decimal | None]:
-        """Return live Yahoo daily change saved by Update Portfolio."""
+        """Return the live daily change saved by PortfolioValuationService."""
+
         own_session = False
+
         if session is None:
             initialize_database()
             session = get_session()
             own_session = True
 
         try:
-            snapshot = session.scalar(
-                select(PortfolioSnapshot).where(
+            today = date.today()
+
+            current = session.scalar(
+                select(PortfolioSnapshot)
+                .where(
                     PortfolioSnapshot.account_id == account_id,
-                    PortfolioSnapshot.snapshot_date == date.today(),
+                    PortfolioSnapshot.snapshot_date == today,
                 )
             )
-            if snapshot is None or snapshot.daily_change is None:
+
+            if current is None:
                 return None, None
-            change = Decimal(str(snapshot.daily_change))
-            percent = (
-                Decimal(str(snapshot.daily_change_percent))
-                if snapshot.daily_change_percent is not None
-                else self._daily_change_percent(snapshot.total_value, change)
+
+            if current.daily_change is not None:
+                change = Decimal(str(current.daily_change))
+                percent = (
+                    Decimal(str(current.daily_change_percent))
+                    if current.daily_change_percent is not None
+                    else (
+                        change
+                        / (Decimal(str(current.total_value)) - change)
+                        * Decimal("100")
+                        if Decimal(str(current.total_value)) - change != 0
+                        else Decimal("0")
+                    )
+                )
+                return change, percent
+
+            # Backward-compatible fallback for snapshots created before
+            # daily_change fields were populated.
+            previous = session.scalar(
+                select(PortfolioSnapshot)
+                .where(
+                    PortfolioSnapshot.account_id == account_id,
+                    PortfolioSnapshot.snapshot_date < today,
+                )
+                .order_by(PortfolioSnapshot.snapshot_date.desc())
+                .limit(1)
             )
+
+            if previous is None:
+                return None, None
+
+            current_value = Decimal(str(current.total_value))
+            previous_value = Decimal(str(previous.total_value))
+            change = current_value - previous_value
+
+            percent = (
+                change / previous_value * Decimal("100")
+                if previous_value != 0
+                else Decimal("0")
+            )
+
             return change, percent
+
         finally:
             if own_session:
                 session.close()
 
-    @staticmethod
-    def _daily_change_percent(
-        current_value: Decimal,
-        daily_change: Decimal,
-    ) -> Decimal:
-        """Calculate today's percentage from the live Yahoo snapshot."""
-        previous_close = Decimal(str(current_value)) - Decimal(str(daily_change))
-        if previous_close == 0:
-            return Decimal("0")
-        return Decimal(str(daily_change)) / previous_close * Decimal("100")
 
     # =============================================================
     # ROI

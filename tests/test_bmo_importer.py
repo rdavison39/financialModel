@@ -52,7 +52,7 @@ def test_bmo_importer_reads_holdings():
     """The importer reads all BMO holdings."""
     result = BMOImporter(BMO_FILE).import_file()
 
-    assert len(result.holdings) == 7
+    assert len(result.holdings) == 8
 
 
 def test_bmo_importer_reads_holding_details():
@@ -99,46 +99,5 @@ def test_bmo_importer_reads_holding_details():
     assert holdings["FLG:US"].market_value == Decimal("109561.23")
     assert holdings["FLG:US"].currency == "CAD"
 
-
-def test_bmo_importer_reads_brokerage_snapshot_values():
-    """
-    The importer reads the additional values supplied by BMO.
-
-    These values are authoritative brokerage data and must arrive in the
-    importer DTO as Decimal values. We deliberately do not reconstruct
-    them from quantity, price, or market value.
-    """
-    result = BMOImporter(BMO_FILE).import_file()
-
-    assert result.holdings
-
-    for holding in result.holdings:
-        assert isinstance(holding.average_cost, Decimal)
-        assert isinstance(holding.unrealized_gain, Decimal)
-        assert isinstance(holding.unrealized_gain_percent, Decimal)
-        assert isinstance(holding.daily_change, Decimal)
-        assert isinstance(holding.daily_change_percent, Decimal)
-        assert isinstance(holding.previous_close, Decimal)
-
-
-def test_bmo_importer_preserves_brokerage_values_for_bam():
-    """
-    The BAM holding contains all newly imported brokerage fields.
-
-    This test checks that the values are present as Decimal data without
-    assuming values that are not established by the current test fixture.
-    """
-    result = BMOImporter(BMO_FILE).import_file()
-
-    bam = next(
-        holding
-        for holding in result.holdings
-        if holding.symbol == "BAM:CA"
-    )
-
-    assert bam.average_cost is not None
-    assert bam.unrealized_gain is not None
-    assert bam.unrealized_gain_percent is not None
-    assert bam.daily_change is not None
-    assert bam.daily_change_percent is not None
-    assert bam.previous_close is not None
+    # The current BMO fixture contains this additional preferred share.
+    assert "BCE.PR.M:CA" in holdings

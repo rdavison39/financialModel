@@ -2,21 +2,72 @@
 Service for calculating and storing current portfolio values.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.models.holding_snapshot import HoldingSnapshot
 from src.models.portfolio_snapshot import PortfolioSnapshot
 from src.services.market_price_service import MarketPrice, MarketPriceService
 from src.services.portfolio_service import PortfolioService
 
 
+@dataclass
+class CurrentHolding:
+    """A holding with its current calculated valuation."""
+
+    symbol: str
+    company_name: str
+    quantity: Decimal
+    price: Decimal
+    market_value: Decimal
+    currency: str
+    average_cost: Decimal | None
+    unrealized_gain: Decimal | None
+    unrealized_gain_percent: Decimal | None
+    daily_change: Decimal | None
+    daily_change_percent: Decimal | None
+    previous_close: Decimal | None
+
+    @property
+    def current_price(self) -> Decimal:
+        """Compatibility alias used by the Holdings UI."""
+        return self.price
+
+    @property
+    def current_market_value(self) -> Decimal:
+        """Compatibility alias used by the Holdings UI."""
+        return self.market_value
+
+    @property
+    def current_cad_value(self) -> Decimal:
+        """Compatibility alias for the CAD market value."""
+        return self.market_value
+
+
+@dataclass
+class CurrentCash:
+    """Cash with its current CAD valuation."""
+
+    currency: str
+    amount: Decimal
+    current_cad_value: Decimal
+
+    @property
+    def current_value(self) -> Decimal:
+        """Compatibility alias for current CAD value."""
+        return self.current_cad_value
+
+
 class PortfolioValuationService:
-    """Calculates and stores current portfolio values."""
+    """Calculate and store current portfolio values."""
+
+    OPTION_MULTIPLIER = Decimal("100")
 
     def __init__(
         self,
@@ -35,7 +86,6 @@ class PortfolioValuationService:
         self._progress_total = 0
         self._progress_count = 0
 
-        # Values calculated during the most recent update.
         self.total_daily_change = Decimal("0")
         self.total_daily_change_percent = Decimal("0")
         self.tsx_daily_change_percent: Decimal | None = None
@@ -45,20 +95,145 @@ class PortfolioValuationService:
         self.brokerage_daily_changes: dict[int, Decimal] = {}
         self.brokerage_daily_change_percents: dict[int, Decimal] = {}
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def calculate_current_values(
+        self,
+        portfolio,
+    ) -> tuple[
+        list[CurrentHolding],
+        list[CurrentCash],
+        Decimal,
+        Decimal,
+    ]:
+        """
+        Calculate current values for an account.
+
+        Returns:
+            current holdings,
+            current cash,
+            total current CAD value,
+            total daily change.
+        """
+        symbols = {"CAD=X"}
+        symbols.update(
+            holding.symbol for holding in portfolio.holdings
+        )
+        self._prepare_price_cache(symbols)
+
+        total_value, daily_change = self._calculate_portfolio_value(
+            portfolio
+        )
+
+        usd_to_cad = self._price_cache["CAD=X"]
+        current_holdings: list[CurrentHolding] = []
+
+        for holding in portfolio.holdings:
+            market_price = self._price_cache[holding.symbol]
+
+            if market_price.is_current:
+                current_price = market_price.price
+                multiplier = self._contract_multiplier(
+                    holding.symbol
+                )
+
+                native_value = (
+                    holding.quantity
+                    * current_price
+                    * multiplier
+                )
+
+                if (
+                    holding.currency == "USD"
+                    or holding.symbol.endswith(":US")
+                ):
+                    current_cad_value = (
+                        native_value * usd_to_cad.price
+                    )
+                elif holding.currency == "CAD":
+                    current_cad_value = native_value
+                else:
+                    raise ValueError(
+                        f"Unsupported holding currency: "
+                        f"{holding.currency}"
+                    )
+
+                previous_close = market_price.previous_close
+            else:
+                # Brokerage market_value is already CAD and includes
+                # brokerage FX conversion and option contract sizing.
+                current_cad_value = holding.market_value
+                current_price = holding.price
+                previous_close = holding.previous_close
+
+            current_holdings.append(
+                CurrentHolding(
+                    symbol=holding.symbol,
+                    company_name=holding.company_name,
+                    quantity=holding.quantity,
+                    price=current_price,
+                    market_value=current_cad_value,
+                    currency=holding.currency,
+                    average_cost=holding.average_cost,
+                    unrealized_gain=holding.unrealized_gain,
+                    unrealized_gain_percent=(
+                        holding.unrealized_gain_percent
+                    ),
+                    daily_change=holding.daily_change,
+                    daily_change_percent=(
+                        holding.daily_change_percent
+                    ),
+                    previous_close=previous_close,
+                )
+            )
+
+        current_cash: list[CurrentCash] = []
+
+        for cash in portfolio.cash:
+            if cash.currency == "CAD":
+                current_cad_value = cash.amount
+            elif cash.currency == "USD":
+                current_cad_value = (
+                    cash.amount * usd_to_cad.price
+                )
+            else:
+                raise ValueError(
+                    f"Unsupported cash currency: {cash.currency}"
+                )
+
+            current_cash.append(
+                CurrentCash(
+                    currency=cash.currency,
+                    amount=cash.amount,
+                    current_cad_value=current_cad_value,
+                )
+            )
+
+        return (
+            current_holdings,
+            current_cash,
+            total_value,
+            daily_change,
+        )
+
     def update_account_value(self, account_id: int) -> Decimal:
-        """Calculate and store today's value for an account."""
-        portfolio = self.portfolio_service.get_latest_portfolio(account_id)
+        """Calculate and store today's value for one account."""
+        portfolio = self.portfolio_service.get_latest_portfolio(
+            account_id
+        )
 
         if portfolio is None:
             raise ValueError(
-                f"No imported portfolio exists for account {account_id}."
+                f"No imported portfolio exists for account "
+                f"{account_id}."
             )
 
-        # This method is retained for callers that update one account.
-        # It uses the same cached price logic as the bulk update.
         symbols = {"CAD=X"}
-        symbols.update(holding.symbol for holding in portfolio.holdings)
-
+        symbols.update(
+            holding.symbol for holding in portfolio.holdings
+        )
         self._prepare_price_cache(symbols)
 
         total_value, daily_change = self._calculate_portfolio_value(
@@ -69,12 +244,14 @@ class PortfolioValuationService:
             account_id=account_id,
             snapshot_date=date.today(),
             total_value=total_value,
-            daily_change=daily_change,
         )
 
         self.account_daily_changes[account_id] = daily_change
         self.account_daily_change_percents[account_id] = (
-            self._daily_change_percent(total_value, daily_change)
+            self._daily_change_percent(
+                total_value,
+                daily_change,
+            )
         )
 
         return total_value
@@ -86,7 +263,6 @@ class PortfolioValuationService:
         if not account_ids:
             raise ValueError("No accounts exist in the database.")
 
-        # Load all latest imported portfolios before doing any Yahoo lookups.
         portfolios = {}
 
         for account_id in account_ids:
@@ -96,28 +272,29 @@ class PortfolioValuationService:
 
             if portfolio is None:
                 raise ValueError(
-                    f"No imported portfolio exists for account {account_id}."
+                    f"No imported portfolio exists for account "
+                    f"{account_id}."
                 )
 
             portfolios[account_id] = portfolio
 
-        # Build the complete unique lookup list.
         symbols: set[str] = {"CAD=X"}
 
         for portfolio in portfolios.values():
-            for holding in portfolio.holdings:
-                symbols.add(holding.symbol)
+            symbols.update(
+                holding.symbol
+                for holding in portfolio.holdings
+            )
 
-        # Look up each security only once.
         self._prepare_price_cache(symbols)
 
-        # TSX is a separate market index lookup.
         tsx = self._get_price("^GSPTSE")
 
-        if tsx.is_current:
-            self.tsx_daily_change_percent = tsx.change_percent
-        else:
-            self.tsx_daily_change_percent = None
+        self.tsx_daily_change_percent = (
+            tsx.change_percent
+            if tsx.is_current
+            else None
+        )
 
         self.account_daily_changes.clear()
         self.account_daily_change_percents.clear()
@@ -126,12 +303,13 @@ class PortfolioValuationService:
 
         consolidated_value = Decimal("0")
         consolidated_daily_change = Decimal("0")
-
         account_values: dict[int, Decimal] = {}
 
         for account_id in account_ids:
-            total_value, daily_change = self._calculate_portfolio_value(
-                portfolios[account_id]
+            total_value, daily_change = (
+                self._calculate_portfolio_value(
+                    portfolios[account_id]
+                )
             )
 
             account_values[account_id] = total_value
@@ -140,23 +318,26 @@ class PortfolioValuationService:
 
             self.account_daily_changes[account_id] = daily_change
             self.account_daily_change_percents[account_id] = (
-                self._daily_change_percent(total_value, daily_change)
+                self._daily_change_percent(
+                    total_value,
+                    daily_change,
+                )
             )
 
             self._save_snapshot(
                 account_id=account_id,
                 snapshot_date=date.today(),
                 total_value=total_value,
-                daily_change=daily_change,
             )
 
         self.total_daily_change = consolidated_daily_change
-        self.total_daily_change_percent = self._daily_change_percent(
-            consolidated_value,
-            consolidated_daily_change,
+        self.total_daily_change_percent = (
+            self._daily_change_percent(
+                consolidated_value,
+                consolidated_daily_change,
+            )
         )
 
-        # Calculate brokerage totals and daily changes.
         from src.models.account import Account
 
         brokerage_values: dict[int, Decimal] = {}
@@ -196,13 +377,15 @@ class PortfolioValuationService:
             account_id=None,
             snapshot_date=date.today(),
             total_value=consolidated_value,
-            daily_change=consolidated_daily_change,
         )
 
         return consolidated_value
 
+    # ------------------------------------------------------------------
+    # Price cache
+    # ------------------------------------------------------------------
+
     def _prepare_price_cache(self, symbols: set[str]) -> None:
-        """Retrieve all required prices once and report progress."""
         self._price_cache.clear()
         self._progress_count = 0
         self._progress_total = len(symbols)
@@ -211,7 +394,6 @@ class PortfolioValuationService:
             self._get_price(symbol)
 
     def _get_price(self, symbol: str) -> MarketPrice:
-        """Get a price from the cache or Yahoo Finance."""
         if symbol in self._price_cache:
             return self._price_cache[symbol]
 
@@ -229,8 +411,30 @@ class PortfolioValuationService:
 
         return price
 
-    def _calculate_portfolio_value(self, portfolio) -> tuple[Decimal, Decimal]:
-        """Calculate live value and today's change using Yahoo Finance."""
+    # ------------------------------------------------------------------
+    # Valuation
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _is_option(cls, symbol: str) -> bool:
+        normalized = symbol.strip().upper()
+        return (
+            normalized.startswith("CALL ")
+            or normalized.startswith("PUT ")
+        )
+
+    @classmethod
+    def _contract_multiplier(cls, symbol: str) -> Decimal:
+        if cls._is_option(symbol):
+            return cls.OPTION_MULTIPLIER
+
+        return Decimal("1")
+
+    def _calculate_portfolio_value(
+        self,
+        portfolio,
+    ) -> tuple[Decimal, Decimal]:
+        """Calculate current CAD value and daily change."""
         usd_to_cad = self._price_cache["CAD=X"]
 
         if not usd_to_cad.is_current:
@@ -245,60 +449,52 @@ class PortfolioValuationService:
             market_price = self._price_cache[holding.symbol]
 
             if market_price.is_current:
-                current_price = market_price.price
-                security_change = holding.quantity * market_price.change
-                yahoo_previous_close = market_price.previous_close
-                yahoo_change_percent = market_price.change_percent
-            else:
-                current_price = holding.price
-                security_change = Decimal("0")
-                yahoo_previous_close = Decimal("0")
-                yahoo_change_percent = Decimal("0")
-
-            value = holding.quantity * current_price
-
-            if holding.currency == "CAD":
-                value_cad = value
-                change_cad = security_change
-                previous_close_cad = (
-                    holding.quantity * yahoo_previous_close
-                )
-            elif holding.currency == "USD" or holding.symbol.endswith(":US"):
-                value_cad = value * usd_to_cad.price
-                change_cad = security_change * usd_to_cad.price
-                previous_close_cad = (
+                native_value = (
                     holding.quantity
-                    * yahoo_previous_close
-                    * usd_to_cad.price
+                    * market_price.price
+                    * self._contract_multiplier(holding.symbol)
                 )
+
+                if (
+                    holding.currency == "USD"
+                    or holding.symbol.endswith(":US")
+                ):
+                    value = native_value * usd_to_cad.price
+                elif holding.currency == "CAD":
+                    value = native_value
+                else:
+                    raise ValueError(
+                        f"Unsupported holding currency: "
+                        f"{holding.currency}"
+                    )
+            else:
+                # Brokerage market_value is already CAD.
+                value = holding.market_value
+
+            holding_change = holding.daily_change or Decimal("0")
+
+            if (
+                holding.currency == "USD"
+                or holding.symbol.endswith(":US")
+            ):
+                daily_change += (
+                    holding_change * usd_to_cad.price
+                )
+            elif holding.currency == "CAD":
+                daily_change += holding_change
             else:
                 raise ValueError(
-                    f"Unsupported holding currency: {holding.currency}"
+                    f"Unsupported holding currency: "
+                    f"{holding.currency}"
                 )
 
-            total_value += value_cad
-            daily_change += change_cad
-
-            # Persist live Yahoo values on the historical holding snapshot.
-            # These fields are separate from the brokerage-reported fields.
-            snapshot = self.session.get(
-                HoldingSnapshot,
-                holding.snapshot_id,
-            )
-            if snapshot is not None:
-                snapshot.current_price = current_price
-                snapshot.current_market_value = value_cad
-                snapshot.current_previous_close = yahoo_previous_close
-                snapshot.current_daily_change = change_cad
-                snapshot.current_daily_change_percent = yahoo_change_percent
+            total_value += value
 
         for cash in portfolio.cash:
             if cash.currency == "CAD":
                 total_value += cash.amount
             elif cash.currency == "USD":
                 total_value += cash.amount * usd_to_cad.price
-                if usd_to_cad.is_current:
-                    daily_change += cash.amount * usd_to_cad.change
             else:
                 raise ValueError(
                     f"Unsupported cash currency: {cash.currency}"
@@ -311,7 +507,6 @@ class PortfolioValuationService:
         current_value: Decimal,
         daily_change: Decimal,
     ) -> Decimal:
-        """Calculate today's percentage change."""
         previous_close_value = current_value - daily_change
 
         if previous_close_value == 0:
@@ -323,8 +518,11 @@ class PortfolioValuationService:
             * Decimal("100")
         )
 
+    # ------------------------------------------------------------------
+    # Database
+    # ------------------------------------------------------------------
+
     def _get_account_ids(self) -> list[int]:
-        """Return the IDs of all accounts."""
         from src.models.account import Account
 
         return list(
@@ -338,9 +536,7 @@ class PortfolioValuationService:
         account_id: int | None,
         snapshot_date: date,
         total_value: Decimal,
-        daily_change: Decimal,
     ) -> None:
-        """Insert or replace a live Yahoo portfolio snapshot."""
         snapshot = self.session.scalar(
             select(PortfolioSnapshot).where(
                 PortfolioSnapshot.account_id == account_id,
@@ -348,24 +544,14 @@ class PortfolioValuationService:
             )
         )
 
-        daily_change_percent = self._daily_change_percent(
-            total_value,
-            daily_change,
-        )
-
         if snapshot is None:
             snapshot = PortfolioSnapshot(
                 account_id=account_id,
                 snapshot_date=snapshot_date,
                 total_value=total_value,
-                daily_change=daily_change,
-                daily_change_percent=daily_change_percent,
             )
             self.session.add(snapshot)
         else:
             snapshot.total_value = total_value
-            snapshot.daily_change = daily_change
-            snapshot.daily_change_percent = daily_change_percent
 
         self.session.commit()
-

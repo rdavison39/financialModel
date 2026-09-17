@@ -175,7 +175,7 @@ class BMOImporter:
         """Read security holdings from the Holding Details section."""
         holdings: list[ImportedHolding] = []
 
-        for row in range(13, worksheet.max_row + 1):
+        for row in range(12, worksheet.max_row + 1):
             symbol = worksheet.cell(row, 1).value
 
             if not symbol:

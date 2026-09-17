@@ -2,8 +2,10 @@
 Service for managing investment accounts.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -35,7 +37,6 @@ class AccountService:
     """Manages investment accounts."""
 
     def __init__(self, session: Session) -> None:
-        """Initialize the account service."""
         self.session = session
 
     def get_or_create(
@@ -44,12 +45,7 @@ class AccountService:
         account_number: str,
         name: str | None = None,
     ) -> Account:
-        """
-        Find an account or create it if it does not exist.
-
-        Accounts are uniquely identified by brokerage and account number.
-        """
-
+        """Find an account or create it if it does not exist."""
         brokerage = self._get_or_create_brokerage(brokerage_name)
 
         account = self.session.scalar(
@@ -67,46 +63,32 @@ class AccountService:
             account_number=account_number,
             name=name or account_number,
         )
-
         self.session.add(account)
         self.session.commit()
         self.session.refresh(account)
-
         return account
 
-    def rename(
-        self,
-        account_id: int,
-        name: str,
-    ) -> Account:
+    def rename(self, account_id: int, name: str) -> Account:
         """Change the friendly name of an account."""
-
         name = name.strip()
-
         if not name:
             raise ValueError("Account name cannot be blank.")
 
         account = self.session.get(Account, account_id)
-
         if account is None:
-            raise ValueError(
-                f"Account {account_id} does not exist."
-            )
+            raise ValueError(f"Account {account_id} does not exist.")
 
         account.name = name
         self.session.commit()
         self.session.refresh(account)
-
         return account
 
     def get(self, account_id: int) -> Account | None:
         """Return an account by ID."""
-
         return self.session.get(Account, account_id)
 
     def get_all(self) -> list[Account]:
         """Return all accounts."""
-
         return list(
             self.session.scalars(
                 select(Account).order_by(Account.id)
@@ -114,8 +96,14 @@ class AccountService:
         )
 
     def get_summaries(self) -> list[AccountSummary]:
-        """Return current summary information for every account."""
+        """
+        Return account summaries.
 
+        Current value comes from today's PortfolioSnapshot when one exists,
+        which is the same saved valuation used by the Portfolio page. If
+        today's valuation has not been run, the most recent stored snapshot
+        is used.
+        """
         accounts = list(
             self.session.execute(
                 select(Account, Brokerage)
@@ -123,18 +111,20 @@ class AccountService:
                     Brokerage,
                     Brokerage.id == Account.brokerage_id,
                 )
-                .order_by(Brokerage.name, Account.account_number)
+                .order_by(
+                    Brokerage.name,
+                    Account.account_number,
+                )
             ).all()
         )
 
+        today = date.today()
         summaries: list[AccountSummary] = []
 
         for account, brokerage in accounts:
             latest_import = self.session.scalar(
                 select(ImportRecord)
-                .where(
-                    ImportRecord.account_id == account.id,
-                )
+                .where(ImportRecord.account_id == account.id)
                 .order_by(ImportRecord.snapshot_date.desc())
                 .limit(1)
             )
@@ -143,10 +133,22 @@ class AccountService:
                 select(PortfolioSnapshot.total_value)
                 .where(
                     PortfolioSnapshot.account_id == account.id,
+                    PortfolioSnapshot.snapshot_date == today,
                 )
-                .order_by(PortfolioSnapshot.snapshot_date.desc())
+                .order_by(
+                    PortfolioSnapshot.snapshot_date.desc(),
+                    PortfolioSnapshot.id.desc(),
+                )
                 .limit(1)
             )
+
+            if current_value is None:
+                current_value = self.session.scalar(
+                    select(PortfolioSnapshot.total_value)
+                    .where(PortfolioSnapshot.account_id == account.id)
+                    .order_by(PortfolioSnapshot.snapshot_date.desc())
+                    .limit(1)
+                )
 
             cash_by_currency: dict[str, Decimal] = {}
             holdings_count = 0
@@ -166,7 +168,7 @@ class AccountService:
                 ).all()
 
                 cash_by_currency = {
-                    str(currency): amount
+                    str(currency): Decimal(str(amount or 0))
                     for currency, amount in cash_rows
                 }
 
@@ -188,7 +190,11 @@ class AccountService:
                     brokerage_name=brokerage.name,
                     account_number=account.account_number,
                     name=account.name,
-                    current_value=current_value,
+                    current_value=(
+                        Decimal(str(current_value))
+                        if current_value is not None
+                        else None
+                    ),
                     cash_by_currency=cash_by_currency,
                     holdings_count=holdings_count,
                     last_import=(
@@ -206,7 +212,6 @@ class AccountService:
         brokerage_name: str,
     ) -> Brokerage:
         """Find or create a brokerage."""
-
         brokerage = self.session.scalar(
             select(Brokerage).where(
                 Brokerage.name == brokerage_name,
@@ -216,12 +221,8 @@ class AccountService:
         if brokerage is not None:
             return brokerage
 
-        brokerage = Brokerage(
-            name=brokerage_name,
-        )
-
+        brokerage = Brokerage(name=brokerage_name)
         self.session.add(brokerage)
         self.session.commit()
         self.session.refresh(brokerage)
-
         return brokerage
