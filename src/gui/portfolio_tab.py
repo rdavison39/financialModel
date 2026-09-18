@@ -2,21 +2,21 @@
 Portfolio tab for the Financial Model GUI.
 """
 
+import queue
+import threading
 import tkinter as tk
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import messagebox, ttk
 
 from sqlalchemy import select, func
 
 from src.database import get_session
 from src.database_init import initialize_database
+from src.gui.accounts_tab import AccountsTab
 from src.models.account import Account
 from src.models.brokerage import Brokerage
 from src.models.portfolio_snapshot import PortfolioSnapshot
-from src.models.holding_snapshot import HoldingSnapshot
-from src.services.portfolio_service import PortfolioService
-from src.gui.account_holdings_window import show_account_holdings
 from src.services.portfolio_valuation_service import (
     PortfolioValuationService,
 )
@@ -29,7 +29,13 @@ class PortfolioTab(ttk.Frame):
         super().__init__(parent)
 
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(5, weight=1)
+        self.rowconfigure(4, weight=1)
+
+        # Portfolio valuation runs in a worker thread so the Tkinter event
+        # loop remains responsive while Yahoo Finance requests are in progress.
+        self._update_queue: queue.Queue = queue.Queue()
+        self._update_thread: threading.Thread | None = None
+        self._update_running = False
 
         self._build_ui()
 
@@ -78,11 +84,12 @@ class PortfolioTab(ttk.Frame):
             pady=(0, 10),
         )
 
-        ttk.Button(
+        self.update_button = ttk.Button(
             controls,
             text="Update Portfolio",
             command=self._update_portfolio,
-        ).pack(side="left")
+        )
+        self.update_button.pack(side="left")
 
         self.status_label = ttk.Label(
             controls,
@@ -339,171 +346,16 @@ class PortfolioTab(ttk.Frame):
         # ---------------------------------------------------------
         # Accounts
         # ---------------------------------------------------------
-
-        accounts_frame = ttk.LabelFrame(
-            self,
-            text="Accounts",
-            padding=8,
-        )
-
-        accounts_frame.grid(
+        # The Accounts view is embedded here so Portfolio is the
+        # single authoritative account screen. It retains account
+        # type, Include, rename, snapshot comparison, cash,
+        # holdings, current value, Today, ROI, and last import.
+        self.accounts_page = AccountsTab(self)
+        self.accounts_page.grid(
             row=5,
             column=0,
             sticky="nsew",
-        )
-
-        accounts_frame.columnconfigure(0, weight=1)
-        accounts_frame.rowconfigure(0, weight=1)
-
-        self.accounts_tree = ttk.Treeview(
-            accounts_frame,
-            columns=(
-                "brokerage",
-                "account",
-                "name",
-                "value",
-                "today",
-                "roi",
-            ),
-            show="headings",
-            height=10,
-        )
-
-        self.accounts_tree.tag_configure(
-            "today_positive",
-            foreground="green",
-        )
-        self.accounts_tree.tag_configure(
-            "today_negative",
-            foreground="red",
-        )
-        self.accounts_tree.tag_configure(
-            "today_zero",
-            foreground="black",
-        )
-        self.accounts_tree.tag_configure(
-            "excluded",
-            foreground="gray50",
-        )
-
-        self.accounts_tree.heading(
-            "brokerage",
-            text="Brokerage",
-        )
-
-        self.accounts_tree.heading(
-            "account",
-            text="Account",
-        )
-
-        self.accounts_tree.heading(
-            "name",
-            text="Name",
-        )
-
-        self.accounts_tree.heading(
-            "value",
-            text="Current Market Value",
-        )
-
-        self.accounts_tree.heading(
-            "today",
-            text="Today",
-        )
-
-
-        self.accounts_tree.heading(
-            "roi",
-            text="ROI",
-        )
-
-        # Keep the complete table visible in the normal window.
-
-        self.accounts_tree.column(
-            "brokerage",
-            width=145,
-            minwidth=130,
-            stretch=False,
-        )
-
-        self.accounts_tree.column(
-            "account",
-            width=115,
-            minwidth=105,
-            stretch=False,
-        )
-
-        self.accounts_tree.column(
-            "name",
-            width=145,
-            minwidth=120,
-            stretch=True,
-        )
-
-        self.accounts_tree.column(
-            "value",
-            width=175,
-            minwidth=165,
-            anchor="e",
-            stretch=False,
-        )
-
-        self.accounts_tree.column(
-            "today",
-            width=225,
-            minwidth=210,
-            anchor="e",
-            stretch=True,
-        )
-
-
-        self.accounts_tree.column(
-            "roi",
-            width=85,
-            minwidth=75,
-            anchor="e",
-            stretch=False,
-        )
-
-        self.accounts_tree.grid(
-            row=0,
-            column=0,
-            sticky="nsew",
-        )
-
-        account_actions = ttk.Frame(accounts_frame)
-        account_actions.grid(
-            row=1,
-            column=0,
-            sticky="w",
-            pady=(8, 0),
-        )
-
-        ttk.Button(
-            account_actions,
-            text="Change Account Name",
-            command=self._change_account_name,
-        ).pack(side="left")
-
-        accounts_scrollbar = ttk.Scrollbar(
-            accounts_frame,
-            orient="vertical",
-            command=self.accounts_tree.yview,
-        )
-
-        accounts_scrollbar.grid(
-            row=0,
-            column=1,
-            sticky="ns",
-        )
-
-        self.accounts_tree.configure(
-            yscrollcommand=accounts_scrollbar.set,
-        )
-
-        self.accounts_tree.bind(
-            "<Double-1>",
-            self._open_account_holdings,
+            pady=(0, 5),
         )
 
     # =============================================================
@@ -511,8 +363,13 @@ class PortfolioTab(ttk.Frame):
     # =============================================================
 
     def _update_portfolio(self) -> None:
-        """Update all account and consolidated portfolio values."""
+        """Start a portfolio update without blocking the Tkinter UI thread."""
 
+        if self._update_running:
+            return
+
+        self._update_running = True
+        self.update_button.configure(state="disabled")
         self.status_label.configure(text="Updating...")
         self.progress_bar.configure(value=0)
         self.progress_label.configure(
@@ -520,79 +377,106 @@ class PortfolioTab(ttk.Frame):
         )
         self.update_idletasks()
 
+        self._update_thread = threading.Thread(
+            target=self._run_portfolio_update_worker,
+            name="portfolio-update",
+            daemon=True,
+        )
+        self._update_thread.start()
+
+        # Poll the thread-safe queue from Tkinter's main thread.  All widget
+        # updates happen here, never from the worker thread.
+        self.after(50, self._poll_update_queue)
+
+    def _run_portfolio_update_worker(self) -> None:
+        """Perform the long-running valuation work on a background thread."""
+
+        session = None
+
         try:
             initialize_database()
-
             session = get_session()
 
-            try:
-                service = PortfolioValuationService(
-                    session,
-                    progress_callback=self._update_progress,
-                )
-
-                total_value = service.update_all_accounts()
-
-                # Capture the values calculated by the valuation
-                # service while they are still available.
-                tsx_change = getattr(
-                    service,
-                    "tsx_daily_change_percent",
-                    None,
-                )
-
-            finally:
-                session.close()
-
-            self._load_current_values(
-                tsx_change=tsx_change
+            service = PortfolioValuationService(
+                session,
+                progress_callback=self._queue_update_progress,
             )
 
-            self.progress_bar.configure(value=100)
-            self.progress_label.configure(
-                text=(
-                    "Updating Portfolio: 100%   Complete   "
-                    f"TOTAL: {self._format_currency(total_value)}"
-                )
+            total_value = service.update_all_accounts()
+            tsx_change = getattr(
+                service,
+                "tsx_daily_change_percent",
+                None,
             )
 
-            self.status_label.configure(
-                text=(
-                    f"Updated: "
-                    f"{self._format_currency(total_value)}"
-                )
+            self._update_queue.put(
+                ("complete", total_value, tsx_change)
             )
-
-            # Notify the Accounts tab that the portfolio snapshots have
-            # been updated.  Accounts listens for this event and reloads
-            # its values automatically, so a manual Refresh is not needed.
-            self.event_generate("<<PortfolioUpdated>>", when="tail")
 
         except Exception as exc:
-            self.progress_label.configure(
-                text=(
-                    "Update failed: "
-                    f"{type(exc).__name__}: {exc}"
-                )
-            )
-            self.progress_bar.configure(value=0)
-
-            self.status_label.configure(
-                text="Update failed."
+            # Pass only simple values between threads.  The exception itself
+            # is deliberately not used by the GUI worker after this point.
+            self._update_queue.put(
+                ("error", type(exc).__name__, str(exc))
             )
 
-            messagebox.showerror(
-                "Portfolio Update Error",
-                f"{type(exc).__name__}: {exc}",
-            )
+        finally:
+            if session is not None:
+                session.close()
 
-    def _update_progress(
+    def _queue_update_progress(
         self,
         count: int,
         total: int,
         symbol: str,
     ) -> None:
-        """Update the single-line portfolio progress display."""
+        """Queue a progress update for the Tkinter main thread."""
+
+        self._update_queue.put(("progress", count, total, symbol))
+
+    def _poll_update_queue(self) -> None:
+        """Apply queued worker results and progress updates on the UI thread."""
+
+        try:
+            while True:
+                message = self._update_queue.get_nowait()
+                message_type = message[0]
+
+                if message_type == "progress":
+                    _, count, total, symbol = message
+                    self._show_update_progress(count, total, symbol)
+                    continue
+
+                if message_type == "complete":
+                    _, total_value, tsx_change = message
+                    self._finish_portfolio_update(
+                        total_value,
+                        tsx_change,
+                    )
+                    return
+
+                if message_type == "error":
+                    _, error_type, error_text = message
+                    self._fail_portfolio_update(
+                        error_type,
+                        error_text,
+                    )
+                    return
+
+        except queue.Empty:
+            pass
+
+        if self._update_running:
+            self.after(50, self._poll_update_queue)
+
+    def _show_update_progress(
+        self,
+        count: int,
+        total: int,
+        symbol: str,
+    ) -> None:
+        """Display queued portfolio update progress."""
+
         if total <= 0:
             percent = 0
         else:
@@ -605,7 +489,67 @@ class PortfolioTab(ttk.Frame):
                 f"{count} / {total}   {symbol}"
             )
         )
-        self.update_idletasks()
+
+    def _update_progress(
+        self,
+        count: int,
+        total: int,
+        symbol: str,
+    ) -> None:
+        """Compatibility wrapper that queues progress safely."""
+
+        self._queue_update_progress(count, total, symbol)
+
+    def _finish_portfolio_update(
+        self,
+        total_value: Decimal,
+        tsx_change: Decimal | None,
+    ) -> None:
+        """Finish a successful update on the Tkinter main thread."""
+
+        self._update_running = False
+        self.update_button.configure(state="normal")
+
+        self._load_current_values(tsx_change=tsx_change)
+
+        self.progress_bar.configure(value=100)
+        self.progress_label.configure(
+            text=(
+                "Updating Portfolio: 100%   Complete   "
+                f"TOTAL: {self._format_currency(total_value)}"
+            )
+        )
+
+        self.status_label.configure(
+            text=f"Updated: {self._format_currency(total_value)}"
+        )
+
+        # Notify the Accounts tab that the portfolio snapshots have been
+        # updated. Accounts listens for this event and reloads its values
+        # automatically, so a manual Refresh is not needed.
+        self.event_generate("<<PortfolioUpdated>>", when="tail")
+
+    def _fail_portfolio_update(
+        self,
+        error_type: str,
+        error_text: str,
+    ) -> None:
+        """Finish a failed update on the Tkinter main thread."""
+
+        self._update_running = False
+        self.update_button.configure(state="normal")
+
+        self.progress_label.configure(
+            text=f"Update failed: {error_type}: {error_text}"
+        )
+        self.progress_bar.configure(value=0)
+        self.status_label.configure(text="Update failed.")
+
+        messagebox.showerror(
+            "Portfolio Update Error",
+            f"{error_type}: {error_text}",
+        )
+
 
     # =============================================================
     # Load values
@@ -649,55 +593,69 @@ class PortfolioTab(ttk.Frame):
                     )
                 ) or 0
 
-                included_value, included_change = session.execute(
+                # Calculate the displayed portfolio value and today's
+                # gain/loss from the included accounts' cached snapshots.
+                #
+                # Do not use the consolidated snapshot for these figures:
+                # the consolidated snapshot represents the inclusion state
+                # at the time of the last Portfolio Update and therefore
+                # cannot reflect a checkbox change.
+                included_rows = session.execute(
                     select(
-                        func.sum(PortfolioSnapshot.total_value),
-                        func.sum(PortfolioSnapshot.daily_change),
+                        Account.id,
+                        PortfolioSnapshot.total_value,
                     )
                     .join(
-                        Account,
-                        Account.id == PortfolioSnapshot.account_id,
+                        PortfolioSnapshot,
+                        PortfolioSnapshot.account_id == Account.id,
                     )
                     .where(
                         PortfolioSnapshot.snapshot_date == today,
                         Account.include_in_portfolio.is_(True),
                     )
-                ).one()
+                ).all()
 
-                if included_account_count == 0:
-                    # No accounts are currently included in the portfolio.
+                if not included_rows:
                     total_value = Decimal("0")
                     total_change = Decimal("0")
                     total_percent = Decimal("0")
-                elif included_value is None and consolidated is not None:
-                    # Backward-compatible fallback for databases that have
-                    # not yet generated today's account-level snapshots.
-                    total_value = Decimal(str(consolidated.total_value))
-                    total_change = (
-                        Decimal(str(consolidated.daily_change))
-                        if consolidated.daily_change is not None
-                        else None
-                    )
-                    total_percent = (
-                        Decimal(str(consolidated.daily_change_percent))
-                        if consolidated.daily_change_percent is not None
-                        else None
-                    )
                 else:
-                    total_value = Decimal(str(included_value or 0))
-                    total_change = (
-                        Decimal(str(included_change))
-                        if included_change is not None
-                        else None
+                    total_value = sum(
+                        (
+                            Decimal(str(row.total_value))
+                            for row in included_rows
+                        ),
+                        Decimal("0"),
                     )
-                    total_percent = (
-                        self._daily_change_percent_from_values(
-                            total_value,
-                            total_change,
+
+                    # Use the same daily-change calculation used for each
+                    # account row below.  This handles snapshots where the
+                    # daily_change column is missing or was created before
+                    # that field was populated, while still using only data
+                    # already stored in the database.
+                    total_change = Decimal("0")
+                    have_daily_change = False
+
+                    for row in included_rows:
+                        account_change, _ = self._calculate_daily_change(
+                            row.id,
+                            session=session,
                         )
-                        if total_change is not None
-                        else None
-                    )
+
+                        if account_change is not None:
+                            total_change += Decimal(str(account_change))
+                            have_daily_change = True
+
+                    if have_daily_change:
+                        total_percent = (
+                            self._daily_change_percent_from_values(
+                                total_value,
+                                total_change,
+                            )
+                        )
+                    else:
+                        total_change = None
+                        total_percent = None
 
                 self.total_value_label.configure(
                     text=self._format_currency(total_value)
@@ -774,40 +732,6 @@ class PortfolioTab(ttk.Frame):
                     )
 
                 # -------------------------------------------------
-                # Account values
-                # -------------------------------------------------
-
-                rows = session.execute(
-                    select(
-                        Account,
-                        Brokerage.name,
-                        PortfolioSnapshot.total_value,
-                    )
-                    .join(
-                        Brokerage,
-                        Brokerage.id == Account.brokerage_id,
-                    )
-                    .join(
-                        PortfolioSnapshot,
-                        PortfolioSnapshot.account_id
-                        == Account.id,
-                    )
-                    .where(
-                        PortfolioSnapshot.snapshot_date == today,
-                    )
-                    .order_by(
-                        Brokerage.name,
-                        Account.account_number,
-                    )
-                ).all()
-
-                self._display_accounts(
-                    rows,
-                    session,
-                    tsx_change,
-                )
-
-                # -------------------------------------------------
                 # Brokerage values
                 # -------------------------------------------------
 
@@ -825,70 +749,6 @@ class PortfolioTab(ttk.Frame):
                     f"Unable to load values: "
                     f"{type(exc).__name__}"
                 )
-            )
-
-    # =============================================================
-    # Display accounts
-    # =============================================================
-
-    def _display_accounts(
-        self,
-        rows,
-        session,
-        tsx_change: Decimal | None,
-    ) -> None:
-        """Display account values and performance."""
-
-        for item in self.accounts_tree.get_children():
-            self.accounts_tree.delete(item)
-
-        for account, brokerage_name, value in rows:
-
-            change, change_percent = (
-                self._calculate_daily_change(
-                    account.id,
-                    session=session,
-                )
-            )
-
-            roi = self._calculate_roi(
-                account.id,
-                value,
-                session,
-            )
-
-            if change is None:
-                today_text = "--"
-            else:
-                today_text = (
-                    f"{self._format_signed_currency(change)} "
-                    f"({self._format_percent(change_percent)})"
-                )
-
-            if change is None or change == 0:
-                today_tag = "today_zero"
-            elif change > 0:
-                today_tag = "today_positive"
-            else:
-                today_tag = "today_negative"
-
-            tags = [today_tag]
-            if not account.include_in_portfolio:
-                tags.append("excluded")
-
-            self.accounts_tree.insert(
-                "",
-                "end",
-                iid=str(account.id),
-                values=(
-                    brokerage_name,
-                    account.account_number,
-                    account.name,
-                    self._format_currency(value),
-                    today_text,
-                    self._format_percent(roi),
-                ),
-                tags=tuple(tags),
             )
 
     # =============================================================
@@ -964,12 +824,6 @@ class PortfolioTab(ttk.Frame):
                 )
             )
 
-            tsx_text = (
-                "--"
-                if tsx_change is None
-                else self._format_percent(tsx_change)
-            )
-
             self.brokerage_tree.insert(
                 "",
                 "end",
@@ -977,166 +831,15 @@ class PortfolioTab(ttk.Frame):
                     brokerage_name,
                     self._format_currency(value),
                     today_text,
-                    tsx_text,
+                ),
+                tags=(
+                    "today_positive"
+                    if change is not None and change > 0
+                    else "today_negative"
+                    if change is not None and change < 0
+                    else "today_zero"
                 ),
             )
-
-    # =============================================================
-    # Account holdings
-    # =============================================================
-
-    def _open_account_holdings(self, event=None) -> None:
-        """Open the shared consolidated account detail window."""
-
-        selected = self.accounts_tree.selection()
-
-        if not selected:
-            return
-
-        account_id = int(selected[0])
-        values = self.accounts_tree.item(selected[0], "values")
-
-        account_number = str(values[1]) if len(values) > 1 else ""
-        account_name = str(values[2]) if len(values) > 2 else ""
-
-        session = None
-
-        try:
-            initialize_database()
-            session = get_session()
-
-            portfolio = PortfolioService(session).get_latest_portfolio(account_id)
-
-            if portfolio is None:
-                messagebox.showinfo(
-                    "Account Holdings",
-                    "No imported holdings were found for this account.",
-                )
-                return
-
-            valuation_service = PortfolioValuationService(session)
-            cached_values = valuation_service.get_cached_current_values(
-                account_id
-            )
-
-            if cached_values is None:
-                messagebox.showinfo(
-                    "Account Holdings",
-                    "No calculated portfolio valuation is available yet. "
-                    "Click 'Update Portfolio' first.",
-                )
-                return
-
-            (
-                current_holdings,
-                current_cash,
-                current_total,
-                current_daily_change,
-            ) = cached_values
-
-            show_account_holdings(
-                self,
-                account_number,
-                account_name,
-                portfolio,
-                current_holdings,
-                current_cash,
-                current_total,
-                current_daily_change,
-            )
-
-        except Exception as exc:
-            messagebox.showerror(
-                "Account Holdings",
-                f"Unable to load account holdings:\n\n"
-                f"{type(exc).__name__}: {exc}",
-            )
-        finally:
-            if session is not None:
-                session.close()
-
-    # =============================================================
-    # Account name
-    # =============================================================
-
-    def _change_account_name(self) -> None:
-        """Change and persist the friendly name of the selected account."""
-        selected = self.accounts_tree.selection()
-
-        if not selected:
-            messagebox.showinfo(
-                "Change Account Name",
-                "Select an account first.",
-            )
-            return
-
-        account_id = int(selected[0])
-        values = self.accounts_tree.item(selected[0], "values")
-
-        if len(values) < 3:
-            return
-
-        account_number = str(values[1])
-        current_name = str(values[2])
-
-        new_name = simpledialog.askstring(
-            "Change Account Name",
-            f"Account {account_number}:",
-            initialvalue=current_name,
-            parent=self,
-        )
-
-        if new_name is None:
-            return
-
-        new_name = new_name.strip()
-
-        if not new_name:
-            messagebox.showwarning(
-                "Change Account Name",
-                "The account name cannot be blank.",
-            )
-            return
-
-        session = None
-
-        try:
-            initialize_database()
-            session = get_session()
-
-            account = session.scalar(
-                select(Account).where(Account.id == account_id)
-            )
-
-            if account is None:
-                raise ValueError(
-                    f"Account ID {account_id} was not found."
-                )
-
-            account.name = new_name
-            session.commit()
-
-            updated_values = list(values)
-            updated_values[2] = new_name
-
-            self.accounts_tree.item(
-                selected[0],
-                values=updated_values,
-            )
-
-        except Exception as exc:
-            if session is not None:
-                session.rollback()
-
-            messagebox.showerror(
-                "Change Account Name",
-                f"Unable to save account name:\n\n"
-                f"{type(exc).__name__}: {exc}",
-            )
-
-        finally:
-            if session is not None:
-                session.close()
 
     # =============================================================
     # Daily change

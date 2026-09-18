@@ -3,6 +3,7 @@ Accounts tab for the Financial Model GUI.
 """
 
 import json
+import re
 import tkinter as tk
 from datetime import date
 from decimal import Decimal
@@ -20,7 +21,12 @@ from src.services.account_service import AccountService
 from src.services.portfolio_service import PortfolioService
 from src.services.portfolio_valuation_service import PortfolioValuationService
 from src.gui.account_holdings_window import show_account_holdings
-from src.gui.treeview_sort import bind_sortable_headings, numeric_sort_key, parse_text
+from src.gui.treeview_sort import (
+    bind_sortable_headings,
+    numeric_sort_key,
+    parse_text,
+    sort_treeview,
+)
 
 
 class AccountsTab(ttk.Frame):
@@ -184,6 +190,7 @@ class AccountsTab(ttk.Frame):
             "cash",
             "holdings",
             "last_import",
+            "today_sort",
         )
 
         self.accounts_tree = ttk.Treeview(
@@ -205,7 +212,9 @@ class AccountsTab(ttk.Frame):
             "cash": "Cash",
             "holdings": "Holdings",
             "last_import": "Last Import",
+            "today_sort": "",
         }
+        self._heading_text = headings.copy()
 
         widths = {
             "brokerage": 75,
@@ -219,6 +228,7 @@ class AccountsTab(ttk.Frame):
             "cash": 115,
             "holdings": 65,
             "last_import": 105,
+            "today_sort": 0,
         }
 
         for column in columns:
@@ -229,7 +239,7 @@ class AccountsTab(ttk.Frame):
             self.accounts_tree.column(
                 column,
                 width=widths[column],
-                minwidth=50,
+                minwidth=0 if column == "today_sort" else 50,
                 anchor=(
                     "center"
                     if column == "include"
@@ -316,6 +326,17 @@ class AccountsTab(ttk.Frame):
                 "last_import": parse_text,
             },
             on_sorted=self._on_accounts_sorted,
+        )
+
+        # Today is displayed in the adjacent canvas so that its positive/
+        # negative colour can be independent of the rest of the row.  The
+        # hidden Treeview column above stores the numeric-sortable Today
+        # value, while the visible Today heading delegates to the same sort
+        # mechanism used by the other columns.
+        self._today_sort_descending = False
+        self.today_heading.bind(
+            "<Button-1>",
+            self._sort_today,
         )
 
         self.accounts_tree.bind(
@@ -463,6 +484,7 @@ class AccountsTab(ttk.Frame):
                         self._format_cash(summary.cash_by_currency),
                         str(summary.holdings_count),
                         self._format_datetime(summary.last_import),
+                        today_text,
                     ),
                     tags=tags,
                 )
@@ -544,8 +566,77 @@ class AccountsTab(ttk.Frame):
             )
             self._draw_today_row(row_index, text, color)
 
-    def _on_accounts_sorted(self, _column: str, _descending: bool) -> None:
+    @staticmethod
+    def _today_sort_key(value: object) -> Decimal | None:
+        """Extract the numeric daily change from the displayed Today text.
+
+        The visible value has the form ``+$1,234.56 (+0.42%)``.  The generic
+        numeric parser cannot parse that complete string because it contains
+        both a dollar amount and a percentage, so Today needs its own key.
+        """
+        if value is None:
+            return None
+
+        text = str(value).strip()
+
+        if not text or text == "--":
+            return None
+
+        match = re.match(
+            r"^\s*([+-]?(?:\$)?[\d,]+(?:\.\d+)?)",
+            text,
+        )
+
+        if match is None:
+            return None
+
+        number = match.group(1).replace("$", "").replace(",", "")
+
+        try:
+            return Decimal(number)
+        except Exception:
+            return None
+
+    def _sort_today(self, _event=None) -> str:
+        """Sort accounts by today's numeric gain/loss amount."""
+        descending = self._today_sort_descending
+
+        sort_treeview(
+            self.accounts_tree,
+            "today_sort",
+            key=self._today_sort_key,
+            descending=descending,
+        )
+
+        for name in self.accounts_tree["columns"]:
+            if name == "today_sort":
+                continue
+            # Restore the normal heading text first; sortable headings will
+            # then keep their own arrow state visually intact.
+            if name in self._heading_text:
+                self.accounts_tree.heading(
+                    name,
+                    text=self._heading_text[name],
+                )
+
+        arrow = " ▼" if descending else " ▲"
+        self.today_heading.configure(
+            text="Today" + arrow,
+        )
+
+        self._today_sort_descending = not descending
+        self._redraw_today_canvas()
+        self._update_today_canvas_scrollregion(
+            len(self.accounts_tree.get_children())
+        )
+        return "break"
+
+    def _on_accounts_sorted(self, column: str, descending: bool) -> None:
         """Keep the separate Today display aligned after sorting."""
+        # A different Treeview sort becomes the active sort, so clear the
+        # Today heading indicator.  The next click on Today starts ascending.
+        self.today_heading.configure(text="Today")
+        self._today_sort_descending = False
         self._redraw_today_canvas()
         self._update_today_canvas_scrollregion(
             len(self.accounts_tree.get_children())

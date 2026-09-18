@@ -209,7 +209,11 @@ def show_account_holdings(
         any_unavailable = any_unavailable or unavailable
 
         price_fg = "#e87500" if unavailable else "black"
-        today_fg = "green" if today > 0 else "red" if today < 0 else "black"
+        today_fg = (
+            "#008000" if today > 0
+            else "#cc0000" if today < 0
+            else "black"
+        )
         quantity = f"{holding.quantity:,.6f}".rstrip("0").rstrip(".")
 
         values = (
@@ -237,7 +241,7 @@ def show_account_holdings(
                 pady=2,
                 bg="white",
                 fg=fg,
-                font=("Segoe UI", 9),
+                font=("Segoe UI", 9, "bold") if col in (8, 9) else ("Segoe UI", 9),
             ).grid(row=row_index, column=col, sticky="nsew")
 
     def on_table_configure(_event=None):

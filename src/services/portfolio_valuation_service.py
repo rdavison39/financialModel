@@ -135,10 +135,11 @@ class PortfolioValuationService:
 
         for holding in portfolio.holdings:
             market_price = self._price_cache[holding.symbol]
+            multiplier = self._contract_multiplier(holding.symbol)
 
             if market_price.is_current:
                 current_price = market_price.price
-                multiplier = self._contract_multiplier(holding.symbol)
+                previous_close = market_price.previous_close
                 native_value = (
                     holding.quantity
                     * current_price
@@ -157,11 +158,20 @@ class PortfolioValuationService:
                         f"Unsupported holding currency: {holding.currency}"
                     )
 
-                previous_close = market_price.previous_close
+                position_daily_change = self._calculate_holding_daily_change(
+                    holding, market_price, usd_to_cad.price
+                )
+                position_daily_change_percent = (
+                    self._calculate_holding_daily_change_percent(
+                        holding, market_price, usd_to_cad.price
+                    )
+                )
             else:
                 current_cad_value = holding.market_value
                 current_price = holding.price
                 previous_close = holding.previous_close
+                position_daily_change = holding.daily_change or Decimal("0")
+                position_daily_change_percent = holding.daily_change_percent
 
             current_holdings.append(
                 CurrentHolding(
@@ -174,8 +184,8 @@ class PortfolioValuationService:
                     average_cost=holding.average_cost,
                     unrealized_gain=holding.unrealized_gain,
                     unrealized_gain_percent=holding.unrealized_gain_percent,
-                    daily_change=holding.daily_change,
-                    daily_change_percent=holding.daily_change_percent,
+                    daily_change=position_daily_change,
+                    daily_change_percent=position_daily_change_percent,
                     previous_close=previous_close,
                     is_current=market_price.is_current,
                 )
@@ -494,22 +504,26 @@ class PortfolioValuationService:
                 # Brokerage market_value is already CAD.
                 value = holding.market_value
 
-            holding_change = holding.daily_change or Decimal("0")
-
-            if (
-                holding.currency == "USD"
-                or holding.symbol.endswith(":US")
-            ):
-                daily_change += (
-                    holding_change * usd_to_cad.price
+            if market_price.is_current:
+                daily_change += self._calculate_holding_daily_change(
+                    holding, market_price, usd_to_cad.price
                 )
-            elif holding.currency == "CAD":
-                daily_change += holding_change
             else:
-                raise ValueError(
-                    f"Unsupported holding currency: "
-                    f"{holding.currency}"
-                )
+                # Yahoo-unavailable securities retain the brokerage-imported
+                # daily change as a fallback.
+                holding_change = holding.daily_change or Decimal("0")
+                if (
+                    holding.currency == "USD"
+                    or holding.symbol.endswith(":US")
+                ):
+                    daily_change += holding_change * usd_to_cad.price
+                elif holding.currency == "CAD":
+                    daily_change += holding_change
+                else:
+                    raise ValueError(
+                        f"Unsupported holding currency: "
+                        f"{holding.currency}"
+                    )
 
             total_value += value
 
@@ -524,6 +538,63 @@ class PortfolioValuationService:
                 )
 
         return total_value, daily_change
+
+    @classmethod
+    def _calculate_holding_daily_change(
+        cls,
+        holding,
+        market_price: MarketPrice,
+        usd_to_cad: Decimal,
+    ) -> Decimal:
+        """Calculate a holding's change from its current quote movement."""
+        if not market_price.is_current or market_price.previous_close is None:
+            return Decimal("0")
+
+        position_change = (
+            holding.quantity
+            * (market_price.price - market_price.previous_close)
+            * cls._contract_multiplier(holding.symbol)
+        )
+
+        if holding.currency == "USD" or holding.symbol.endswith(":US"):
+            return position_change * usd_to_cad
+        if holding.currency == "CAD":
+            return position_change
+
+        raise ValueError(
+            f"Unsupported holding currency: {holding.currency}"
+        )
+
+    @classmethod
+    def _calculate_holding_daily_change_percent(
+        cls,
+        holding,
+        market_price: MarketPrice,
+        usd_to_cad: Decimal,
+    ) -> Decimal | None:
+        """Calculate a holding's daily percentage change."""
+        if not market_price.is_current or market_price.previous_close is None:
+            return holding.daily_change_percent
+
+        previous_value = (
+            holding.quantity
+            * market_price.previous_close
+            * cls._contract_multiplier(holding.symbol)
+        )
+        if holding.currency == "USD" or holding.symbol.endswith(":US"):
+            previous_value *= usd_to_cad
+        elif holding.currency != "CAD":
+            raise ValueError(
+                f"Unsupported holding currency: {holding.currency}"
+            )
+
+        if previous_value == 0:
+            return Decimal("0")
+
+        change = cls._calculate_holding_daily_change(
+            holding, market_price, usd_to_cad
+        )
+        return change / previous_value * Decimal("100")
 
     @staticmethod
     def _daily_change_percent(
