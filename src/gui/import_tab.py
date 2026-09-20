@@ -9,6 +9,7 @@ from tkinter import filedialog, messagebox, ttk
 from src.database import get_session
 from src.database_init import initialize_database
 from src.services.bulk_import_service import BulkImportService
+from src.services.ui_settings_service import UISettingsService
 
 
 class ImportTab(ttk.Frame):
@@ -19,6 +20,7 @@ class ImportTab(ttk.Frame):
 
         self.columnconfigure(1, weight=1)
         self.rowconfigure(8, weight=1)
+        self._ui_settings = UISettingsService()
 
         # ---------------------------------------------------------
         # Title
@@ -55,6 +57,9 @@ class ImportTab(ttk.Frame):
         self.bmo_directory = tk.StringVar(
             value=r"C:\Users\ronal\Downloads\bmo"
         )
+        saved = self._ui_settings.get_screen("import")
+        if isinstance(saved.get("bmo_directory"), str):
+            self.bmo_directory.set(saved["bmo_directory"])
 
         ttk.Entry(
             self,
@@ -107,6 +112,8 @@ class ImportTab(ttk.Frame):
         self.nesbitt_directory = tk.StringVar(
             value=r"C:\Users\ronal\Downloads\nesbitt"
         )
+        if isinstance(saved.get("nesbitt_directory"), str):
+            self.nesbitt_directory.set(saved["nesbitt_directory"])
 
         ttk.Entry(
             self,
@@ -144,7 +151,12 @@ class ImportTab(ttk.Frame):
         # Re-import option
         # ---------------------------------------------------------
 
-        self.force_reimport = tk.BooleanVar(value=False)
+        self.force_reimport = tk.BooleanVar(
+            value=bool(saved.get("force_reimport", False))
+        )
+        self.bmo_directory.trace_add("write", self._ui_setting_changed)
+        self.nesbitt_directory.trace_add("write", self._ui_setting_changed)
+        self.force_reimport.trace_add("write", self._ui_setting_changed)
 
         ttk.Checkbutton(
             self,
@@ -248,6 +260,7 @@ class ImportTab(ttk.Frame):
 
         if directory:
             self.bmo_directory.set(directory)
+            self._save_ui_settings()
 
     def _browse_nesbitt(self) -> None:
         """Select the Nesbitt Burns directory."""
@@ -259,6 +272,23 @@ class ImportTab(ttk.Frame):
 
         if directory:
             self.nesbitt_directory.set(directory)
+            self._save_ui_settings()
+
+    def _ui_setting_changed(self, *_args) -> None:
+        self._save_ui_settings()
+
+    def _save_ui_settings(self) -> None:
+        try:
+            self._ui_settings.update(
+                "import",
+                {
+                    "bmo_directory": self.bmo_directory.get(),
+                    "nesbitt_directory": self.nesbitt_directory.get(),
+                    "force_reimport": self.force_reimport.get(),
+                },
+            )
+        except Exception:
+            pass
 
     # -------------------------------------------------------------
     # Import operations
