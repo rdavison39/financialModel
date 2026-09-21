@@ -52,15 +52,12 @@ class FinancialModelApp(tk.Tk):
         self.rowconfigure(0, weight=1)
 
         navigation = ttk.Frame(self, padding=10)
+        self.navigation = navigation
         navigation.grid(
             row=0,
             column=0,
             sticky="ns",
         )
-
-        # Shared by pages that place account selectors below the navigation
-        # buttons.  Keep this reference independent of button labels.
-        self.navigation = navigation
 
         ttk.Label(
             navigation,

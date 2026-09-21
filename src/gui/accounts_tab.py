@@ -5,12 +5,13 @@ Accounts tab for the Financial Model GUI.
 import json
 import re
 import tkinter as tk
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from sqlalchemy import select
 
+from src.models.import_record import ImportRecord
 from src.models.portfolio_snapshot import PortfolioSnapshot
 
 from src.database import get_session
@@ -67,7 +68,7 @@ class AccountsTab(ttk.Frame):
 
         ttk.Label(
             self,
-            text="Accounts",
+            text="Account Management",
             font=("Segoe UI", 18, "bold"),
         ).grid(
             row=0,
@@ -136,9 +137,7 @@ class AccountsTab(ttk.Frame):
             padx=(15, 4),
         )
 
-        self.from_var = tk.StringVar(
-            value=(date.today() - timedelta(days=365)).isoformat()
-        )
+        self.from_var = tk.StringVar()
         self.from_entry = ttk.Entry(
             compare,
             textvariable=self.from_var,
@@ -151,7 +150,7 @@ class AccountsTab(ttk.Frame):
             padx=(12, 4),
         )
 
-        self.to_var = tk.StringVar(value=date.today().isoformat())
+        self.to_var = tk.StringVar()
         self.to_entry = ttk.Entry(
             compare,
             textvariable=self.to_var,
@@ -793,7 +792,7 @@ class AccountsTab(ttk.Frame):
         self.after_idle(self._view_holdings)
 
     def _account_selected(self, _event=None) -> None:
-        """Load settings for the selected account."""
+        """Load settings and snapshot dates for the selected account."""
         if self._restoring_ui_settings:
             return
 
@@ -818,12 +817,24 @@ class AccountsTab(ttk.Frame):
                     )
                     self._loading_account_settings = False
 
+                snapshots = session.scalars(
+                    select(ImportRecord.snapshot_date)
+                    .where(ImportRecord.account_id == account_id)
+                    .order_by(ImportRecord.snapshot_date.desc())
+                    .limit(2)
+                ).all()
             finally:
                 session.close()
 
-            today = date.today()
-            self.from_var.set((today - timedelta(days=365)).isoformat())
-            self.to_var.set(today.isoformat())
+            if len(snapshots) >= 2:
+                self.to_var.set(self._format_date_value(snapshots[0]))
+                self.from_var.set(self._format_date_value(snapshots[1]))
+            elif len(snapshots) == 1:
+                self.to_var.set(self._format_date_value(snapshots[0]))
+                self.from_var.set(self._format_date_value(snapshots[0]))
+            else:
+                self.from_var.set("")
+                self.to_var.set("")
 
         except Exception as exc:
             self.status_label.configure(
@@ -1266,7 +1277,7 @@ class AccountsTab(ttk.Frame):
 
     @staticmethod
     def _parse_date(value: str):
-        from datetime import date, timedeltatime
+        from datetime import datetime
 
         return datetime.strptime(
             value.strip(),
@@ -1287,6 +1298,11 @@ class AccountsTab(ttk.Frame):
         values = self._ui_settings.get_screen("account_management")
         self._restoring_ui_settings = True
         try:
+            if isinstance(values.get("from_date"), str):
+                self.from_var.set(values["from_date"])
+            if isinstance(values.get("to_date"), str):
+                self.to_var.set(values["to_date"])
+
             selected_account_id = values.get("selected_account_id")
             if selected_account_id is not None:
                 try:
@@ -1306,6 +1322,8 @@ class AccountsTab(ttk.Frame):
             self._ui_settings.update(
                 "account_management",
                 {
+                    "from_date": self.from_var.get().strip(),
+                    "to_date": self.to_var.get().strip(),
                     "selected_account_id": self._selected_account_id(),
                 },
             )

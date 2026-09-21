@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from src.database import get_session
 from src.database_init import initialize_database
+from src.models.portfolio_snapshot import PortfolioSnapshot
 from src.services.portfolio_comparison_service import PortfolioComparisonService
 from src.services.ui_settings_service import UISettingsService
 
@@ -63,28 +64,20 @@ class ComparisonTab(ttk.Frame):
         controls.grid(row=1, column=0, sticky="ew", pady=(0, 10))
 
         ttk.Label(controls, text="From:").pack(side="left")
-        self.from_var = tk.StringVar(
-            value=(date.today() - timedelta(days=365)).isoformat()
+        self.from_var = tk.StringVar()
+        ttk.Entry(controls, textvariable=self.from_var, width=12).pack(
+            side="left", padx=(5, 14)
         )
-        ttk.Entry(
-            controls,
-            textvariable=self.from_var,
-            width=12,
-        ).pack(side="left", padx=(5, 14))
 
         ttk.Label(controls, text="To:").pack(side="left")
-        self.to_var = tk.StringVar(value=date.today().isoformat())
-        ttk.Entry(
-            controls,
-            textvariable=self.to_var,
-            width=12,
-        ).pack(side="left", padx=(5, 8))
+        self.to_var = tk.StringVar()
+        ttk.Entry(controls, textvariable=self.to_var, width=12).pack(
+            side="left", padx=(5, 8)
+        )
 
-        ttk.Button(
-            controls,
-            text="Refresh",
-            command=self._compare,
-        ).pack(side="left", padx=4)
+        ttk.Button(controls, text="Refresh", command=self._compare).pack(
+            side="left", padx=4
+        )
 
         self.heading = ttk.Label(
             self,
@@ -112,18 +105,11 @@ class ComparisonTab(ttk.Frame):
         )
         self.tree = ttk.Treeview(frame, columns=cols, show="headings")
         heads = {
-            "symbol": "Symbol",
-            "company": "Company",
-            "q1": "Qty From",
-            "q2": "Qty To",
-            "dq": "Qty Change",
-            "a1": "Avg Cost From",
-            "a2": "Avg Cost To",
-            "mv1": "Market Value From",
-            "mv2": "Market Value To",
-            "g1": "Unrealized Gain From",
-            "g2": "Unrealized Gain To",
-            "status": "Status",
+            "symbol": "Symbol", "company": "Company", "q1": "Qty From",
+            "q2": "Qty To", "dq": "Qty Change", "a1": "Avg Cost From",
+            "a2": "Avg Cost To", "mv1": "Market Value From",
+            "mv2": "Market Value To", "g1": "Unrealized Gain From",
+            "g2": "Unrealized Gain To", "status": "Status",
         }
         widths = [100, 220, 90, 90, 100, 115, 115, 140, 140, 145, 145, 100]
         for column, width in zip(cols, widths):
@@ -137,14 +123,9 @@ class ComparisonTab(ttk.Frame):
             )
         self.tree.grid(row=0, column=0, sticky="nsew")
 
-        scrollbar = ttk.Scrollbar(
-            frame,
-            orient="vertical",
-            command=self.tree.yview,
-        )
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=scrollbar.set)
-
         self.tree.tag_configure("increase", foreground="green")
         self.tree.tag_configure("decrease", foreground="red")
         self.tree.tag_configure("neutral", foreground="black")
@@ -154,11 +135,9 @@ class ComparisonTab(ttk.Frame):
 
     @staticmethod
     def _summary(parent, label, column):
-        ttk.Label(
-            parent,
-            text=label,
-            font=("Segoe UI", 10, "bold"),
-        ).grid(row=0, column=column, sticky="e")
+        ttk.Label(parent, text=label, font=("Segoe UI", 10, "bold")).grid(
+            row=0, column=column, sticky="e"
+        )
         value = ttk.Label(parent, text="--")
         value.grid(row=0, column=column + 1, sticky="w", padx=(5, 0))
         return value
@@ -168,13 +147,11 @@ class ComparisonTab(ttk.Frame):
     # ------------------------------------------------------------------
 
     def _build_navigation_account_selector(self) -> None:
-        """Create the account checklist below the left navigation buttons."""
         navigation = self._find_navigation_frame()
         if navigation is None:
             return
 
         background = ttk.Style().lookup("TFrame", "background") or "white"
-
         self._navigation_account_frame = ttk.LabelFrame(
             navigation,
             text="Accounts to Compare",
@@ -187,20 +164,10 @@ class ComparisonTab(ttk.Frame):
 
         controls = ttk.Frame(self._navigation_account_frame)
         controls.pack(fill="x", pady=(0, 4))
-
-        ttk.Button(
-            controls,
-            text="All",
-            width=5,
-            command=self._select_all,
-        ).pack(side="left")
-        ttk.Button(
-            controls,
-            text="None",
-            width=6,
-            command=self._select_none,
-        ).pack(side="left", padx=(4, 0))
-
+        ttk.Button(controls, text="All", width=5, command=self._select_all).pack(side="left")
+        ttk.Button(controls, text="None", width=6, command=self._select_none).pack(
+            side="left", padx=(4, 0)
+        )
         self.selected_accounts_label = ttk.Label(controls, text="0/0")
         self.selected_accounts_label.pack(side="right")
 
@@ -210,42 +177,28 @@ class ComparisonTab(ttk.Frame):
         list_frame.rowconfigure(0, weight=1)
 
         self.account_canvas = tk.Canvas(
-            list_frame,
-            highlightthickness=0,
-            background=background,
-            width=215,
+            list_frame, highlightthickness=0, background=background, width=215
         )
         self.account_canvas.grid(row=0, column=0, sticky="nsew")
-
         self.account_inner = ttk.Frame(self.account_canvas)
         self.account_window = self.account_canvas.create_window(
-            0,
-            0,
-            window=self.account_inner,
-            anchor="nw",
+            0, 0, window=self.account_inner, anchor="nw"
         )
 
         self.account_scrollbar = ttk.Scrollbar(
-            list_frame,
-            orient="vertical",
-            command=self.account_canvas.yview,
+            list_frame, orient="vertical", command=self.account_canvas.yview
         )
         self.account_scrollbar.grid(row=0, column=1, sticky="ns")
-
         self.account_hscrollbar = ttk.Scrollbar(
-            list_frame,
-            orient="horizontal",
-            command=self.account_canvas.xview,
+            list_frame, orient="horizontal", command=self.account_canvas.xview
         )
         self.account_hscrollbar.grid(row=1, column=0, sticky="ew")
-
         self.account_canvas.configure(
             yscrollcommand=self.account_scrollbar.set,
             xscrollcommand=self.account_hscrollbar.set,
         )
         self.account_inner.bind("<Configure>", self._update_account_scrollregion)
         self.account_canvas.bind("<Configure>", self._resize_account_inner)
-
         self._navigation_account_frame.pack_forget()
 
     def _find_navigation_frame(self) -> ttk.Frame | None:
@@ -264,6 +217,8 @@ class ComparisonTab(ttk.Frame):
             self._navigation_account_frame.pack_forget()
 
     def _on_window_configure(self, _event=None) -> None:
+        if not self.winfo_exists():
+            return
         if self.winfo_ismapped():
             self.after_idle(self._sync_navigation_account_height)
 
@@ -271,7 +226,6 @@ class ComparisonTab(ttk.Frame):
         frame = self._navigation_account_frame
         if frame is None or not frame.winfo_ismapped():
             return
-
         self.update_idletasks()
         main_bottom = self.winfo_rooty() + self.winfo_height()
         frame_top = frame.winfo_rooty()
@@ -280,24 +234,86 @@ class ComparisonTab(ttk.Frame):
             frame.configure(height=desired_height)
 
     def _update_account_scrollregion(self, _event=None) -> None:
-        self.account_canvas.configure(
-            scrollregion=self.account_canvas.bbox("all")
-        )
+        self.account_canvas.configure(scrollregion=self.account_canvas.bbox("all"))
 
     def _resize_account_inner(self, event) -> None:
         requested_width = self.account_inner.winfo_reqwidth()
         self.account_canvas.itemconfigure(
-            self.account_window,
-            width=max(requested_width, event.width),
+            self.account_window, width=max(requested_width, event.width)
         )
 
     # ------------------------------------------------------------------
     # Accounts
     # ------------------------------------------------------------------
 
-    def _load_accounts(self) -> None:
+    def _account_key(self, account) -> str:
+        return (
+            f"{account.brokerage_name}|{account.account_number}|"
+            f"{account.account_name or ''}"
+        )
+
+    def _read_saved_selection(self) -> tuple[bool, set[str], set[int]]:
+        """Read the saved selection before any new checkbox variables exist."""
+        values = self._ui_settings.get_screen("holdings_history")
+        has_saved = any(
+            key in values
+            for key in (
+                "selected_account_refs",
+                "selected_account_keys",
+                "selected_account_ids",
+                "selected_accounts",
+            )
+        )
+        if not has_saved:
+            return False, set(), set()
+
+        saved_keys: set[str] = set()
+        saved_ids: set[int] = set()
+
+        for field in ("selected_account_refs", "selected_account_keys", "selected_accounts"):
+            values_list = values.get(field)
+            if not isinstance(values_list, list):
+                continue
+            for value in values_list:
+                if isinstance(value, str):
+                    saved_keys.add(value)
+                else:
+                    try:
+                        saved_ids.add(int(value))
+                    except (TypeError, ValueError):
+                        pass
+
+        values_list = values.get("selected_account_ids")
+        if isinstance(values_list, list):
+            for value in values_list:
+                try:
+                    saved_ids.add(int(value))
+                except (TypeError, ValueError):
+                    pass
+
+        return True, saved_keys, saved_ids
+
+    def _current_selection_keys(self) -> set[str]:
+        return {
+            self._account_key(account)
+            for account in self._accounts
+            if account.account_id in self._account_vars
+            and self._account_vars[account.account_id].get()
+        }
+
+    def _load_accounts(self, preserve_current_selection: bool = False) -> None:
+        """Load accounts without ever resetting an existing user selection."""
         session = None
         try:
+            # Capture the current selection before destroying the checkbox
+            # variables. This is used for refreshes during the same session.
+            current_keys = (
+                self._current_selection_keys()
+                if preserve_current_selection
+                else set()
+            )
+            has_saved, saved_keys, saved_ids = self._read_saved_selection()
+
             initialize_database()
             session = get_session()
             self._accounts = PortfolioComparisonService(session).get_accounts()
@@ -306,30 +322,42 @@ class ComparisonTab(ttk.Frame):
                 widget.destroy()
             self._account_vars.clear()
 
-            # Match Portfolio History: all accounts are selected initially.
-            for row, account in enumerate(self._accounts):
-                variable = tk.BooleanVar(value=True)
-                self._account_vars[account.account_id] = variable
+            self._restoring_ui_settings = True
+            try:
+                for row, account in enumerate(self._accounts):
+                    if preserve_current_selection:
+                        selected = self._account_key(account) in current_keys
+                    elif has_saved:
+                        selected = (
+                            self._account_key(account) in saved_keys
+                            or account.account_id in saved_ids
+                        )
+                    else:
+                        selected = True
 
-                ttk.Checkbutton(
-                    self.account_inner,
-                    text=(
-                        f"{account.brokerage_name} - {account.account_number}"
-                        + (f" - {account.account_name}" if account.account_name else "")
-                    ),
-                    variable=variable,
-                    command=self._selection_changed,
-                ).grid(row=row, column=0, sticky="w", padx=0, pady=1)
+                    variable = tk.BooleanVar(value=selected)
+                    self._account_vars[account.account_id] = variable
+                    ttk.Checkbutton(
+                        self.account_inner,
+                        text=(
+                            f"{account.brokerage_name} - {account.account_number}"
+                            + (f" - {account.account_name}" if account.account_name else "")
+                        ),
+                        variable=variable,
+                        command=self._selection_changed,
+                    ).grid(row=row, column=0, sticky="w", padx=0, pady=1)
+            finally:
+                self._restoring_ui_settings = False
 
             self._update_account_count()
             self._update_account_scrollregion()
 
+            # Dates are intentionally recalculated on every load and are never
+            # read from UI settings.
             today = date.today()
-            self.from_var.set(self._fmt_date(today - timedelta(days=365)))
             self.to_var.set(self._fmt_date(today))
+            self.from_var.set(self._fmt_date(today - timedelta(days=365)))
 
-            self._restore_ui_settings()
-            self._update_account_count()
             self._compare()
         except Exception as exc:
             self.status.configure(
@@ -340,19 +368,20 @@ class ComparisonTab(ttk.Frame):
                 session.close()
 
     def _selection_changed(self) -> None:
+        """Persist checkbox state immediately after a user click."""
+        if self._restoring_ui_settings:
+            return
         self._update_account_count()
         self._save_ui_settings()
         self._compare()
 
     def _update_account_count(self) -> None:
-        selected = sum(
-            variable.get() for variable in self._account_vars.values()
-        )
-        self.selected_accounts_label.configure(
-            text=f"{selected}/{len(self._accounts)}"
-        )
+        selected = sum(variable.get() for variable in self._account_vars.values())
+        self.selected_accounts_label.configure(text=f"{selected}/{len(self._accounts)}")
 
     def _select_all(self) -> None:
+        if self._restoring_ui_settings:
+            return
         for variable in self._account_vars.values():
             variable.set(True)
         self._update_account_count()
@@ -360,6 +389,8 @@ class ComparisonTab(ttk.Frame):
         self._compare()
 
     def _select_none(self) -> None:
+        if self._restoring_ui_settings:
+            return
         for variable in self._account_vars.values():
             variable.set(False)
         self._update_account_count()
@@ -367,41 +398,32 @@ class ComparisonTab(ttk.Frame):
         self._clear_results()
 
     def _ui_setting_changed(self, *_args) -> None:
-        self._save_ui_settings()
-
-    def _restore_ui_settings(self) -> None:
-        values = self._ui_settings.get_screen("holdings_history")
-        self._restoring_ui_settings = True
-        try:
-            selected_ids = values.get("selected_account_ids")
-            if isinstance(selected_ids, list):
-                selected = {
-                    int(value) for value in selected_ids
-                    if str(value).lstrip("-").isdigit()
-                }
-                for account_id, variable in self._account_vars.items():
-                    variable.set(account_id in selected)
-        except (TypeError, ValueError):
-            pass
-        finally:
-            self._restoring_ui_settings = False
+        # Date changes are deliberately not persisted. The service strips
+        # legacy/current date fields, and this method does not save selection.
+        return
 
     def _save_ui_settings(self) -> None:
-        if self._restoring_ui_settings:
+        """Save only account selection; dates are never persisted."""
+        if self._restoring_ui_settings or not self._accounts:
             return
-        try:
-            self._ui_settings.update(
-                "holdings_history",
-                {
-                    "selected_account_ids": [
-                        account_id
-                        for account_id, variable in self._account_vars.items()
-                        if variable.get()
-                    ],
-                },
-            )
-        except Exception:
-            pass
+
+        selected_accounts = [
+            account
+            for account in self._accounts
+            if self._account_vars[account.account_id].get()
+        ]
+        selected_keys = [self._account_key(account) for account in selected_accounts]
+
+        self._ui_settings.update(
+            "holdings_history",
+            {
+                "selected_account_refs": selected_keys,
+                "selected_account_keys": selected_keys,
+                "selected_account_ids": [
+                    int(account.account_id) for account in selected_accounts
+                ],
+            },
+        )
 
     def _selected_ids(self) -> list[int]:
         return [
@@ -415,7 +437,9 @@ class ComparisonTab(ttk.Frame):
     # ------------------------------------------------------------------
 
     def _compare(self) -> None:
-        self._save_ui_settings()
+        # Do not save here. Checkbox commands already save immediately, and
+        # saving during every refresh made it too easy for a rebuilt list to
+        # overwrite the user's saved selection.
         selected_ids = self._selected_ids()
         if not selected_ids:
             self._clear_results()
@@ -425,16 +449,12 @@ class ComparisonTab(ttk.Frame):
             first_date = self._date(self.from_var.get())
             second_date = self._date(self.to_var.get())
         except ValueError:
-            messagebox.showwarning(
-                "Holdings History",
-                "Enter dates using YYYY-MM-DD.",
-            )
+            messagebox.showwarning("Holdings History", "Enter dates using YYYY-MM-DD.")
             return
 
         if first_date > second_date:
             messagebox.showwarning(
-                "Holdings History",
-                "From date must be on or before To date.",
+                "Holdings History", "From date must be on or before To date."
             )
             return
 
@@ -443,9 +463,7 @@ class ComparisonTab(ttk.Frame):
             initialize_database()
             session = get_session()
             result = PortfolioComparisonService(session).compare(
-                first_date,
-                second_date,
-                account_ids=selected_ids,
+                first_date, second_date, account_ids=selected_ids
             )
         except Exception as exc:
             messagebox.showerror(
@@ -465,8 +483,7 @@ class ComparisonTab(ttk.Frame):
         elif selected_count == 1:
             selected_id = self._selected_ids()[0]
             account = next(
-                account for account in self._accounts
-                if account.account_id == selected_id
+                account for account in self._accounts if account.account_id == selected_id
             )
             heading = (
                 f"{account.brokerage_name} - {account.account_number}"
@@ -479,7 +496,6 @@ class ComparisonTab(ttk.Frame):
         self.from_value.configure(text=self._money(result.first_value))
         self.to_value.configure(text=self._money(result.second_value))
         self.change.configure(text=self._smoney(result.value_difference))
-
         active = [
             position
             for position in result.positions
@@ -489,23 +505,17 @@ class ComparisonTab(ttk.Frame):
 
         for item in self.tree.get_children():
             self.tree.delete(item)
-
         for position in result.positions:
             tag = (
-                "increase"
-                if position.quantity_difference > 0
-                else "decrease"
-                if position.quantity_difference < 0
+                "increase" if position.quantity_difference > 0
+                else "decrease" if position.quantity_difference < 0
                 else "neutral"
             )
             self.tree.insert(
-                "",
-                "end",
+                "", "end",
                 values=(
-                    position.symbol,
-                    position.company_name,
-                    self._qty(position.first_quantity),
-                    self._qty(position.second_quantity),
+                    position.symbol, position.company_name,
+                    self._qty(position.first_quantity), self._qty(position.second_quantity),
                     self._sq(position.quantity_difference),
                     self._money(position.first_average_cost),
                     self._money(position.second_average_cost),
@@ -536,7 +546,9 @@ class ComparisonTab(ttk.Frame):
         self.status.configure(text="Select one or more accounts.")
 
     def _on_portfolio_updated(self, _event=None) -> None:
-        self._load_accounts()
+        # Preserve the current in-memory selection across a portfolio refresh;
+        # do not let the account reload default everything back to checked.
+        self._load_accounts(preserve_current_selection=True)
 
     # ------------------------------------------------------------------
     # Formatting

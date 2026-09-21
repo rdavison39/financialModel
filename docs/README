@@ -1,0 +1,422 @@
+# Davison Financial Model — Developer README
+
+This README is the quick-start document for returning to the project after a long break.
+
+For the complete context, also read:
+
+```text
+PROJECT_OVERVIEW.md
+PROJECT_STATE.md
+ARCHITECTURE.md
+DATA_MODEL.md
+```
+
+---
+
+# Start the Application
+
+From the project root:
+
+```text
+python -m src.gui.app
+```
+
+On Windows, the project also includes:
+
+```text
+run_financical_model.bat
+```
+
+The batch file activates `.venv` and starts the application.
+
+---
+
+# Run Tests
+
+```text
+python -m pytest
+```
+
+Pytest is configured in:
+
+```text
+pyproject.toml
+```
+
+---
+
+# Python Version
+
+The project requires:
+
+```text
+Python 3.13+
+```
+
+---
+
+# Dependencies
+
+Declared in `pyproject.toml`:
+
+```text
+sqlalchemy>=2.0
+openpyxl>=3.1
+yfinance>=1.4
+```
+
+---
+
+# Main Application
+
+Entry point:
+
+```text
+src/gui/app.py
+```
+
+Navigation:
+
+```text
+Portfolio
+Portfolio History
+Account Management
+Account History
+Holdings History
+Import
+```
+
+---
+
+# Database
+
+SQLite database:
+
+```text
+database/financial_model.db
+```
+
+SQLAlchemy setup:
+
+```text
+src/database.py
+src/database_init.py
+```
+
+Models:
+
+```text
+src/models/
+```
+
+---
+
+# Database Migrations
+
+Alembic configuration:
+
+```text
+alembic.ini
+alembic/
+```
+
+Before modifying the database, make a backup.
+
+Then inspect:
+
+```text
+alembic current
+alembic heads
+```
+
+The reviewed database's Alembic revision was:
+
+```text
+7c1d4e8a2b6f
+```
+
+but later migration files are present in the repository, so migration state needs to be checked rather than assumed.
+
+---
+
+# GUI Settings
+
+Persistent GUI settings:
+
+```text
+%APPDATA%\FinancialModel\ui_settings.json
+```
+
+Service:
+
+```text
+src/services/ui_settings_service.py
+```
+
+The settings file is for UI preferences, not financial data.
+
+Dates are intentionally not persisted.
+
+---
+
+# Important Date Rule
+
+Default transient date behavior:
+
+```text
+To   = today
+From = today - 1 year
+```
+
+History screens with named periods calculate their dates from today's date.
+
+Do not reintroduce date persistence.
+
+---
+
+# Important Account Concepts
+
+There are two different kinds of account selection.
+
+## Portfolio inclusion
+
+Stored in the database:
+
+```text
+Account.include_in_portfolio
+```
+
+This controls consolidated portfolio calculations/export.
+
+## History-screen checkboxes
+
+Used for analysis on:
+
+- Portfolio History
+- Account History
+- Holdings History
+
+These are UI preferences and are stored outside the database.
+
+---
+
+# Holdings History
+
+File:
+
+```text
+src/gui/comparison_tab.py
+```
+
+The stable account selection identifier is:
+
+```text
+Brokerage|AccountNumber|AccountName
+```
+
+This is important because the database integer ID is not the preferred long-term UI identity.
+
+---
+
+# Importers
+
+BMO:
+
+```text
+src/importers/bmo_importer.py
+```
+
+Nesbitt Burns:
+
+```text
+src/importers/nesbitt_importer.py
+```
+
+Bulk directory import:
+
+```text
+src/services/bulk_import_service.py
+```
+
+Database import:
+
+```text
+src/services/import_service.py
+```
+
+---
+
+# Valuation
+
+Main valuation service:
+
+```text
+src/services/portfolio_valuation_service.py
+```
+
+Portfolio data:
+
+```text
+src/services/portfolio_service.py
+```
+
+Market prices:
+
+```text
+src/services/market_price_service.py
+```
+
+Market data provider:
+
+```text
+Yahoo Finance / yfinance
+```
+
+---
+
+# Financial Calculation Rule
+
+Use:
+
+```text
+Decimal
+```
+
+for financial calculations.
+
+Do not introduce float-based financial arithmetic.
+
+---
+
+# Historical Data Rule
+
+Brokerage imports are historical facts.
+
+Do not change:
+
+- historical quantities
+- historical cash
+- historical brokerage values
+
+just because current market prices changed.
+
+Calculated valuation belongs in portfolio valuation/snapshot structures.
+
+---
+
+# Current Screen Files
+
+```text
+Portfolio
+    src/gui/portfolio_tab.py
+
+Portfolio History
+    src/gui/graphs_tab.py
+
+Account Management
+    src/gui/accounts_tab.py
+
+Account History
+    src/gui/account_comparison_tab.py
+
+Holdings History
+    src/gui/comparison_tab.py
+
+Import
+    src/gui/import_tab.py
+```
+
+---
+
+# Development Rules
+
+Before making a change:
+
+1. Read the relevant documentation.
+2. Inspect the actual source file.
+3. Identify existing functionality that must remain.
+4. Make the smallest appropriate change.
+5. Run targeted tests.
+6. Run the full suite for substantial changes.
+7. Update documentation if architecture or behavior changes.
+
+Do not delete existing functionality unless explicitly requested.
+
+---
+
+# Known Issues to Revisit
+
+## Account Management date behavior
+
+The current account-selection implementation can load historical import dates into the From/To fields.
+
+The intended behavior is:
+
+```text
+From = today - 1 year
+To   = today
+```
+
+and those dates should not persist.
+
+## Alembic/database state
+
+The database reports revision:
+
+```text
+7c1d4e8a2b6f
+```
+
+while later migrations exist and the database schema already contains some later fields.
+
+This needs careful reconciliation before future migration work.
+
+---
+
+# Cleanup
+
+Potentially disposable development files include:
+
+```text
+.venv/
+Makefile
+requirements-dev.txt
+prune_financial_model.py
+scripts/
+```
+
+Do not delete `scripts/` until any one-time database maintenance scripts are confirmed unnecessary.
+
+Keep:
+
+```text
+src/
+tests/
+docs/
+alembic/
+database/
+data/uploads/
+pyproject.toml
+requirements.txt
+run_financical_model.bat
+```
+
+---
+
+# If Returning After Months Away
+
+The fastest safe restart process is:
+
+```text
+1. Read docs/*.md and docs/README
+2. Inspect git status
+3. Inspect pyproject.toml
+4. Back up database/financial_model.db
+5. Check Alembic state
+6. Activate .venv
+7. Run pytest
+8. Start the GUI
+9. Only then begin development
+```
+
+The documentation files are intended to preserve enough project context that the original development conversation is not required.
