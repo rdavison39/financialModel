@@ -17,10 +17,12 @@ from src.models.portfolio_snapshot import PortfolioSnapshot
 
 @dataclass(frozen=True)
 class PortfolioHistoryPoint:
-    """A portfolio value at a particular valuation date."""
+    """A portfolio value and market-day performance at a valuation date."""
 
     snapshot_date: date
     total_value: Decimal
+    daily_change: Decimal | None = None
+    daily_change_percent: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -145,6 +147,7 @@ class PortfolioHistoryService:
 
         for valuation_date in valuation_dates:
             total = Decimal("0")
+            daily_change = Decimal("0")
             have_value = False
 
             for account_id in unique_account_ids:
@@ -164,16 +167,29 @@ class PortfolioHistoryService:
                 if position < 0:
                     continue
 
-                total += Decimal(
-                    str(account_snapshots[position].total_value)
-                )
+                snapshot = account_snapshots[position]
+                total += Decimal(str(snapshot.total_value))
+
+                # A carried-forward snapshot supplies the account's value,
+                # but it must not repeat the previous trading day's gain/loss.
+                if snapshot.snapshot_date == valuation_date and snapshot.daily_change is not None:
+                    daily_change += Decimal(str(snapshot.daily_change))
+
                 have_value = True
 
             if have_value:
+                previous_close = total - daily_change
+                daily_change_percent = (
+                    daily_change / previous_close * Decimal("100")
+                    if previous_close != 0
+                    else None
+                )
                 result.append(
                     PortfolioHistoryPoint(
                         snapshot_date=valuation_date,
                         total_value=total,
+                        daily_change=daily_change,
+                        daily_change_percent=daily_change_percent,
                     )
                 )
 

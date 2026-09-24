@@ -1,3 +1,11 @@
+git status
+git add src/gui/accounts_tab.py
+git commit -m "goog working order"
+git tag -a sprint-3.3.0    -m "Good working order"
+git push origin main
+git push origin sprint-3.3.0
+
+
 # Davison Financial Model — Developer README
 
 This README is the quick-start document for returning to the project after a long break.

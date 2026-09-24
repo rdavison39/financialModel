@@ -17,6 +17,7 @@ from src.gui.accounts_tab import AccountsTab
 from src.models.account import Account
 from src.models.brokerage import Brokerage
 from src.models.portfolio_snapshot import PortfolioSnapshot
+from src.services.market_price_service import MarketPriceService
 from src.services.portfolio_valuation_service import (
     PortfolioValuationService,
 )
@@ -36,6 +37,8 @@ class PortfolioTab(ttk.Frame):
         self._update_queue: queue.Queue = queue.Queue()
         self._update_thread: threading.Thread | None = None
         self._update_running = False
+        self._tsx_update_thread: threading.Thread | None = None
+        self._tsx_update_running = False
 
         self._build_ui()
 
@@ -90,6 +93,13 @@ class PortfolioTab(ttk.Frame):
             command=self._update_portfolio,
         )
         self.update_button.pack(side="left")
+
+        self.update_tsx_button = ttk.Button(
+            controls,
+            text="Update TSX",
+            command=self._update_tsx,
+        )
+        self.update_tsx_button.pack(side="left", padx=(8, 0))
 
         self.status_label = ttk.Label(
             controls,
@@ -362,10 +372,45 @@ class PortfolioTab(ttk.Frame):
     # Update
     # =============================================================
 
+    def _update_tsx(self) -> None:
+        """Refresh only the TSX benchmark value for today's snapshots."""
+        if self._update_running or self._tsx_update_running:
+            return
+
+        self._tsx_update_running = True
+        self.update_button.configure(state="disabled")
+        self.update_tsx_button.configure(state="disabled")
+        self.status_label.configure(text="Updating TSX...")
+        self.progress_label.configure(text="Updating TSX: retrieving market data...")
+        self.update_idletasks()
+
+        self._tsx_update_thread = threading.Thread(
+            target=self._run_tsx_update_worker,
+            name="tsx-update",
+            daemon=True,
+        )
+        self._tsx_update_thread.start()
+        self.after(50, self._poll_update_queue)
+
+    def _run_tsx_update_worker(self) -> None:
+        """Retrieve today's TSX benchmark value without updating the portfolio."""
+        try:
+            service = MarketPriceService()
+            tsx = service.get_price("^GSPTSE")
+            if tsx is None or tsx.change_percent is None:
+                raise ValueError(
+                    "Could not retrieve the TSX Composite daily change."
+                )
+            self._update_queue.put(("tsx_complete", tsx.change_percent))
+        except Exception as exc:
+            self._update_queue.put(
+                ("tsx_error", type(exc).__name__, str(exc))
+            )
+
     def _update_portfolio(self) -> None:
         """Start a portfolio update without blocking the Tkinter UI thread."""
 
-        if self._update_running:
+        if self._update_running or self._tsx_update_running:
             return
 
         self._update_running = True
@@ -463,10 +508,23 @@ class PortfolioTab(ttk.Frame):
                     )
                     return
 
+                if message_type == "tsx_complete":
+                    _, tsx_change = message
+                    self._finish_tsx_update(tsx_change)
+                    return
+
+                if message_type == "tsx_error":
+                    _, error_type, error_text = message
+                    self._fail_tsx_update(
+                        error_type,
+                        error_text,
+                    )
+                    return
+
         except queue.Empty:
             pass
 
-        if self._update_running:
+        if self._update_running or self._tsx_update_running:
             self.after(50, self._poll_update_queue)
 
     def _show_update_progress(
@@ -499,6 +557,38 @@ class PortfolioTab(ttk.Frame):
         """Compatibility wrapper that queues progress safely."""
 
         self._queue_update_progress(count, total, symbol)
+
+    def _finish_tsx_update(self, tsx_change: Decimal) -> None:
+        """Finish a successful TSX-only update on the Tkinter thread."""
+        self._tsx_update_running = False
+        self.update_button.configure(state="normal")
+        self.update_tsx_button.configure(state="normal")
+        self._load_current_values(tsx_change=tsx_change)
+        self.progress_bar.configure(value=100)
+        self.progress_label.configure(
+            text=f"Updating TSX: Complete   TSX: {self._format_percent(tsx_change)}"
+        )
+        self.status_label.configure(
+            text=f"TSX updated: {self._format_percent(tsx_change)}"
+        )
+
+    def _fail_tsx_update(
+        self,
+        error_type: str,
+        error_text: str,
+    ) -> None:
+        """Finish a failed TSX-only update on the Tkinter thread."""
+        self._tsx_update_running = False
+        self.update_button.configure(state="normal")
+        self.update_tsx_button.configure(state="normal")
+        self.status_label.configure(text="TSX update failed.")
+        self.progress_label.configure(
+            text=f"TSX update failed: {error_type}: {error_text}"
+        )
+        messagebox.showerror(
+            "TSX Update Error",
+            f"{error_type}: {error_text}",
+        )
 
     def _finish_portfolio_update(
         self,
@@ -688,10 +778,14 @@ class PortfolioTab(ttk.Frame):
                 # On application startup there is no valuation service in
                 # memory, so do not depend on the transient tsx_change
                 # argument here.
-                saved_tsx = getattr(
-                    consolidated,
-                    "tsx_daily_change_percent",
-                    None,
+                saved_tsx = (
+                    tsx_change
+                    if tsx_change is not None
+                    else getattr(
+                        consolidated,
+                        "tsx_daily_change_percent",
+                        None,
+                    )
                 )
 
                 if saved_tsx is None:

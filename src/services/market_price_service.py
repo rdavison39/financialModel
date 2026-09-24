@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
@@ -116,10 +116,43 @@ class MarketPriceService:
             )
             daily_rows = self._daily_rows(daily_history)
 
+            # Yahoo can occasionally omit a recent daily bar.  If that
+            # happens, retry the recent window before calculating the daily
+            # change so that a missing yesterday bar cannot turn a one-day
+            # move into a two-day move.
+            if self._needs_daily_history_retry(daily_rows, today):
+                try:
+                    retry_history = ticker.history(
+                        start=(today - timedelta(days=5)).isoformat(),
+                        end=(today + timedelta(days=1)).isoformat(),
+                        interval="1d",
+                    )
+                    daily_rows = self._merge_daily_rows(
+                        daily_rows,
+                        self._daily_rows(retry_history),
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "Recent daily Yahoo retry unavailable for %s: %s",
+                        yahoo_symbol,
+                        exc,
+                    )
+
             previous_close = self._previous_close(
                 daily_rows,
                 today,
             )
+
+            # The Yahoo quote metadata exposes the previous official close.
+            # For the TSX index, prefer it when available because it avoids
+            # relying on the completeness of Yahoo's recent daily-history
+            # rows.  Fall back to the history-derived value if metadata is
+            # unavailable.
+            if yahoo_symbol.upper() == "^GSPTSE":
+                metadata_previous_close = self._quote_previous_close(ticker)
+                if metadata_previous_close is not None:
+                    previous_close = metadata_previous_close
+
             today_close = self._close_for_date(
                 daily_rows,
                 today,
@@ -347,6 +380,65 @@ class MarketPriceService:
 
         rows.sort(key=lambda item: item[0])
         return rows
+
+    @staticmethod
+    def _needs_daily_history_retry(
+        daily_rows: list[tuple],
+        target_date,
+    ) -> bool:
+        """Return True when recent daily history may be missing a bar."""
+        if not daily_rows:
+            return True
+
+        latest_date = daily_rows[-1][0]
+
+        if latest_date < target_date:
+            return True
+
+        if latest_date == target_date:
+            if len(daily_rows) < 2:
+                return True
+
+            # A normal weekday immediately before today's trading session
+            # should be represented by the prior row.  Weekends/holidays are
+            # harmless because the retry simply supplies whatever trading
+            # days actually exist.
+            if target_date.weekday() < 5:
+                prior_date = daily_rows[-2][0]
+                if prior_date < target_date - timedelta(days=1):
+                    return True
+
+        return False
+
+    @staticmethod
+    def _merge_daily_rows(
+        first_rows: list[tuple],
+        second_rows: list[tuple],
+    ) -> list[tuple]:
+        """Merge daily rows by date, preferring the retry result."""
+        merged = {row_date: close for row_date, close in first_rows}
+        merged.update(
+            {row_date: close for row_date, close in second_rows}
+        )
+        return sorted(merged.items(), key=lambda item: item[0])
+
+    @staticmethod
+    def _quote_previous_close(ticker) -> Decimal | None:
+        """Return Yahoo's quote-level previous close when available."""
+        try:
+            info = ticker.info
+            value = info.get("previousClose")
+            if value is None:
+                value = info.get("regularMarketPreviousClose")
+            if value is None:
+                return None
+
+            result = Decimal(str(value))
+            if result.is_nan() or result <= 0:
+                return None
+            return result
+        except Exception:
+            return None
 
     @staticmethod
     def _close_for_date(

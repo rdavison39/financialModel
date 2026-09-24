@@ -414,6 +414,40 @@ class PortfolioValuationService:
 
         return consolidated_value
 
+    def update_tsx_only(self) -> Decimal:
+        """Refresh only today's TSX benchmark value in existing snapshots.
+
+        This deliberately does not recalculate portfolio holdings, account
+        values, daily gains/losses, FX, or brokerage totals.
+        """
+        market_price = self.market_price_service.get_price("^GSPTSE")
+
+        if not market_price.is_current:
+            raise ValueError("Could not retrieve the current TSX value.")
+
+        today = date.today()
+        snapshots = list(
+            self.session.scalars(
+                select(PortfolioSnapshot).where(
+                    PortfolioSnapshot.snapshot_date == today,
+                )
+            ).all()
+        )
+
+        if not snapshots:
+            raise ValueError(
+                "No portfolio valuation exists for today. "
+                "Run Update Portfolio first."
+            )
+
+        for snapshot in snapshots:
+            snapshot.tsx_daily_change_percent = market_price.change_percent
+
+        self.session.commit()
+        self.tsx_daily_change_percent = market_price.change_percent
+
+        return market_price.change_percent
+
     # ------------------------------------------------------------------
     # Price cache
     # ------------------------------------------------------------------

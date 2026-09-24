@@ -35,6 +35,7 @@ class GraphsTab(ttk.Frame):
         self._account_vars: dict[int, tk.BooleanVar] = {}
         self._last_history: list[PortfolioHistoryPoint] = []
         self._last_benchmark = []
+        self._benchmark_previous_value = None
         self._navigation_account_frame: ttk.LabelFrame | None = None
         self._history_frame: ttk.LabelFrame | None = None
         self._ui_settings = UISettingsService()
@@ -93,18 +94,19 @@ class GraphsTab(ttk.Frame):
             row=0, column=0, padx=(0, 5)
         )
 
-        self.view_mode = tk.StringVar(value="Dollar Value")
+        self.view_mode = tk.StringVar(value="Portfolio Value")
         view_combo = ttk.Combobox(
             controls,
             textvariable=self.view_mode,
             values=(
-                "Dollar Value",
-                "Gain/Loss",
-                "% Growth",
-                "Daily Change",
+                "Portfolio Value",
+                "% Growth Since Start",
+                "Day's Gain/Loss",
+                "% Day's Gain/Loss",
             ),
             state="readonly",
             width=15,
+            height=5,
         )
         view_combo.grid(row=0, column=1, padx=(0, 12))
         view_combo.bind("<<ComboboxSelected>>", self._view_changed)
@@ -155,6 +157,7 @@ class GraphsTab(ttk.Frame):
         )
         benchmark_combo.grid(row=0, column=5, padx=(0, 5))
         benchmark_combo.bind("<<ComboboxSelected>>", self._benchmark_changed)
+        self.benchmark_combo = benchmark_combo
 
         self.custom_benchmark = tk.StringVar(value="")
         self.custom_benchmark_entry = ttk.Entry(
@@ -172,6 +175,7 @@ class GraphsTab(ttk.Frame):
             "<Return>",
             lambda _event: self._refresh(),
         )
+        self._update_benchmark_state()
 
         # Dates
         ttk.Label(controls, text="Start:").grid(
@@ -547,22 +551,38 @@ class GraphsTab(ttk.Frame):
 
     def _view_changed(self, _event=None) -> None:
         """Refresh after changing the history metric."""
+        self._update_benchmark_state()
         self._refresh()
 
     def _benchmark_changed(self, _event=None) -> None:
-        """Show custom symbol entry and normalize benchmark comparisons."""
-        benchmark = self.benchmark.get()
+        """Show custom symbol entry only when the selected view supports benchmarks."""
+        if not self._benchmark_is_supported():
+            self.benchmark.set("None")
 
-        if benchmark == "Custom":
+        if self.benchmark.get() == "Custom" and self._benchmark_is_supported():
             self.custom_benchmark_entry.grid()
         else:
             self.custom_benchmark_entry.grid_remove()
 
-        if benchmark != "None" and self.view_mode.get() != "% Growth":
-            self.view_mode.set("% Growth")
-
         self._save_ui_settings()
         self._refresh()
+
+    def _benchmark_is_supported(self) -> bool:
+        """Return whether the current view can meaningfully use a benchmark."""
+        return self.view_mode.get() in {"% Growth Since Start", "% Day's Gain/Loss"}
+
+    def _update_benchmark_state(self) -> None:
+        """Enable benchmarks only for percentage-based comparison views."""
+        if self._benchmark_is_supported():
+            self.benchmark_combo.configure(state="readonly")
+            if self.benchmark.get() == "Custom" and self.custom_benchmark.get().strip():
+                self.custom_benchmark_entry.grid()
+            else:
+                self.custom_benchmark_entry.grid_remove()
+        else:
+            self.benchmark.set("None")
+            self.benchmark_combo.configure(state="disabled")
+            self.custom_benchmark_entry.grid_remove()
 
     def _selection_changed(self) -> None:
         """Refresh after an account selection changes."""
@@ -619,6 +639,7 @@ class GraphsTab(ttk.Frame):
 
         self._save_ui_settings()
         account_ids = self._selected_account_ids()
+        self._benchmark_previous_value = None
 
         if not account_ids:
             self._last_history = []
@@ -633,11 +654,47 @@ class GraphsTab(ttk.Frame):
             session = get_session()
             try:
                 service = PortfolioHistoryService(session)
+                # Portfolio History is the consolidated portfolio history.
+                # The persisted PortfolioSnapshot with account_id=None is the
+                # authoritative portfolio value used by the Portfolio screen.
+                # Using individual account snapshots here can produce a
+                # different daily change when account snapshots are not
+                # perfectly synchronized with the consolidated valuation.
+                # Portfolio History is an account-selection graph.  Build the
+                # history from the selected account snapshots so deselecting an
+                # account changes the graph.  The service carries each selected
+                # account's latest known valuation forward to the next valuation
+                # date, which also keeps accounts synchronized when their
+                # snapshots are recorded on different dates.
                 history = service.get_aggregated_history(
                     start_date=start_date,
                     end_date=end_date,
                     account_ids=account_ids,
                 )
+
+                # Performance views should only plot actual market trading
+                # days. A weekend or market holiday can have a stored
+                # portfolio snapshot, but it is not a trading-day
+                # performance observation. Use the TSX Composite as the
+                # market calendar so statutory/market holidays are handled
+                # without maintaining our own holiday list.
+                if self.view_mode.get() in {
+                    "% Growth Since Start",
+                    "Day's Gain/Loss",
+                    "% Day's Gain/Loss",
+                } and history:
+                    trading_days = {
+                        point.snapshot_date
+                        for point in service.get_benchmark_history(
+                            PortfolioHistoryService.BENCHMARKS["TSX Composite"],
+                            start_date,
+                            end_date,
+                        )
+                    }
+                    history = self._filter_to_trading_days(
+                        history,
+                        trading_days,
+                    )
 
                 benchmark_history = []
                 benchmark = self._benchmark_symbol()
@@ -659,11 +716,36 @@ class GraphsTab(ttk.Frame):
                     )
 
                     if benchmark_start <= benchmark_end:
-                        benchmark_history = service.get_benchmark_history(
+                        benchmark_query_start = benchmark_start
+                        if self.view_mode.get() == "% Day's Gain/Loss":
+                            # Fetch enough history to obtain the previous
+                            # trading-day close.  Daily change must compare
+                            # each plotted close with the immediately preceding
+                            # trading close, not with the first plotted point.
+                            benchmark_query_start = benchmark_start - timedelta(days=14)
+
+                        raw_benchmark_history = service.get_benchmark_history(
                             benchmark,
-                            benchmark_start,
+                            benchmark_query_start,
                             benchmark_end,
                         )
+
+                        if self.view_mode.get() == "% Day's Gain/Loss":
+                            prior_points = [
+                                point
+                                for point in raw_benchmark_history
+                                if point.snapshot_date < benchmark_start
+                            ]
+                            if prior_points:
+                                self._benchmark_previous_value = prior_points[-1].value
+
+                            benchmark_history = [
+                                point
+                                for point in raw_benchmark_history
+                                if point.snapshot_date >= benchmark_start
+                            ]
+                        else:
+                            benchmark_history = raw_benchmark_history
             finally:
                 session.close()
 
@@ -697,7 +779,12 @@ class GraphsTab(ttk.Frame):
         values = self._ui_settings.get_screen("portfolio_history")
         self._restoring_ui_settings = True
         try:
-            if values.get("view") in {"Dollar Value", "Gain/Loss", "% Growth", "Daily Change"}:
+            if values.get("view") in {
+                "Portfolio Value",
+                "% Growth Since Start",
+                "Day's Gain/Loss",
+                "% Day's Gain/Loss",
+            }:
                 self.view_mode.set(values["view"])
             if values.get("period") in {
                 "1 Month", "3 Months", "6 Months", "YTD", "1 Year",
@@ -717,10 +804,7 @@ class GraphsTab(ttk.Frame):
                 for account_id, variable in self._account_vars.items():
                     variable.set(account_id in selected)
 
-            if self.benchmark.get() == "Custom":
-                self.custom_benchmark_entry.grid()
-            else:
-                self.custom_benchmark_entry.grid_remove()
+            self._update_benchmark_state()
         except (TypeError, ValueError):
             pass
         finally:
@@ -764,6 +848,19 @@ class GraphsTab(ttk.Frame):
     # Display
     # -------------------------------------------------------------
 
+    @staticmethod
+    def _filter_to_trading_days(
+        history: list[PortfolioHistoryPoint],
+        trading_days: set[date],
+    ) -> list[PortfolioHistoryPoint]:
+        """Remove non-trading-day observations from performance history."""
+        return [
+            point
+            for point in history
+            if point.snapshot_date.weekday() < 5
+            and point.snapshot_date in trading_days
+        ]
+
     def _display_history(
         self,
         history: list[PortfolioHistoryPoint],
@@ -806,20 +903,18 @@ class GraphsTab(ttk.Frame):
         self,
         history: list[PortfolioHistoryPoint],
     ) -> list[Decimal]:
-        """Transform raw portfolio values into the selected metric."""
+        """Transform stored portfolio valuations into the selected metric."""
         if not history:
             return []
 
         values = [Decimal(str(point.total_value)) for point in history]
         first = values[0]
+        view = self.view_mode.get()
 
-        if self.view_mode.get() == "Dollar Value":
+        if view == "Portfolio Value":
             return values
 
-        if self.view_mode.get() == "Gain/Loss":
-            return [value - first for value in values]
-
-        if self.view_mode.get() == "% Growth":
+        if view == "% Growth Since Start":
             if first == 0:
                 return [Decimal("0") for _ in values]
             return [
@@ -827,12 +922,23 @@ class GraphsTab(ttk.Frame):
                 for value in values
             ]
 
-        # Daily Change
+        if view == "Day's Gain/Loss":
+            return [
+                Decimal(str(point.daily_change))
+                if point.daily_change is not None
+                else Decimal("0")
+                for point in history
+            ]
+
+        # Day's % Gain/Loss is the stored market-day return for each
+        # valuation.  It is deliberately not calculated from the previous
+        # graph point because graph points may be sparse and may span cash
+        # flows or missed valuation dates.
         return [
-            Decimal("0")
-            if index == 0
-            else values[index] - values[index - 1]
-            for index in range(len(values))
+            Decimal(str(point.daily_change_percent))
+            if point.daily_change_percent is not None
+            else Decimal("0")
+            for point in history
         ]
 
     # -------------------------------------------------------------
@@ -871,10 +977,13 @@ class GraphsTab(ttk.Frame):
 
         values = self._transform_history(history)
 
-        # Benchmark comparisons are intentionally normalized to percentage
-        # growth, so selecting one automatically changes the portfolio view
-        # to the same scale.
-        benchmark_values = self._benchmark_growth_values()
+        # Benchmarks are only available for percentage-based views.
+        if self.view_mode.get() == "% Growth Since Start":
+            benchmark_values = self._benchmark_growth_values()
+        elif self.view_mode.get() == "% Day's Gain/Loss":
+            benchmark_values = self._benchmark_daily_change_percent_values()
+        else:
+            benchmark_values = []
 
         all_values = list(values)
         if benchmark_values:
@@ -891,8 +1000,12 @@ class GraphsTab(ttk.Frame):
         graph_min = minimum - padding
         graph_max = maximum + padding
 
-        if self.view_mode.get() in ("Dollar Value",):
+        if self.view_mode.get() in ("Portfolio Value",):
             graph_min = max(Decimal("0"), graph_min)
+
+        if self.view_mode.get() in {"% Growth Since Start", "% Day's Gain/Loss"}:
+            graph_min = min(graph_min, Decimal("0"))
+            graph_max = max(graph_max, Decimal("0"))
 
         if graph_max == graph_min:
             graph_max = graph_min + Decimal("1")
@@ -926,6 +1039,18 @@ class GraphsTab(ttk.Frame):
             width - right,
             height - bottom,
         )
+
+        if self.view_mode.get() in {"% Growth Since Start", "% Day's Gain/Loss"} and graph_min <= 0 <= graph_max:
+            zero_fraction = float((Decimal("0") - graph_min) / (graph_max - graph_min))
+            zero_y = top + (1 - zero_fraction) * graph_height
+            canvas.create_line(
+                left,
+                zero_y,
+                width - right,
+                zero_y,
+                fill="green",
+                width=2,
+            )
 
         points = self._make_points(
             values,
@@ -1048,6 +1173,35 @@ class GraphsTab(ttk.Frame):
             for point in benchmark
         ]
 
+    def _benchmark_daily_change_percent_values(self) -> list[Decimal]:
+        """Return each benchmark trading day's change from its prior close."""
+        benchmark = sorted(
+            (
+                point
+                for point in getattr(self, "_last_benchmark", [])
+                if point.snapshot_date.weekday() < 5
+            ),
+            key=lambda point: point.snapshot_date,
+        )
+        if not benchmark:
+            return []
+
+        result: list[Decimal] = []
+        previous = getattr(self, "_benchmark_previous_value", None)
+
+        for point in benchmark:
+            if previous is None or previous == 0:
+                result.append(Decimal("0"))
+            else:
+                result.append(
+                    (point.value - previous)
+                    / previous
+                    * Decimal("100")
+                )
+            previous = point.value
+
+        return result
+
     def _make_benchmark_points(
         self,
         values: list[Decimal],
@@ -1129,24 +1283,24 @@ class GraphsTab(ttk.Frame):
     def _metric_heading(metric: str) -> str:
         """Return the table/axis heading for a metric."""
         return {
-            "Dollar Value": "Portfolio Value",
-            "Gain/Loss": "Gain / Loss",
-            "% Growth": "% Growth",
-            "Daily Change": "Daily Change",
+            "Portfolio Value": "Portfolio Value",
+            "% Growth Since Start": "% Growth Since Start",
+            "Day's Gain/Loss": "Day's Gain/Loss",
+            "% Day's Gain/Loss": "% Day's Gain/Loss",
         }.get(metric, metric)
 
     @staticmethod
     def _format_metric(metric: str, value: Decimal) -> str:
         """Format a metric value."""
-        if metric == "% Growth":
+        if metric in {"% Growth Since Start", "% Day's Gain/Loss"}:
             return f"{value:+.2f}%"
-        return f"${value:+,.2f}" if metric != "Dollar Value" else f"${value:,.2f}"
+        return f"${value:+,.2f}" if metric != "Portfolio Value" else f"${value:,.2f}"
 
     @staticmethod
     def _format_axis_value(value: Decimal) -> str:
         """Format a graph axis value."""
         # Percent is the only non-currency metric.
-        # Dollar Value/Gain/Loss/Daily Change are all CAD dollar amounts.
+        # Dollar Value and Day's Gain/Loss are CAD dollar amounts.
         # The graph view can be inferred from the active page via this
         # instance helper's caller; percent is handled below in _draw_graph.
         return f"${value / Decimal('1000000'):,.1f}M" if abs(value) >= Decimal("1000000") else (
@@ -1157,7 +1311,7 @@ class GraphsTab(ttk.Frame):
 
     def _format_axis_value(self, value: Decimal) -> str:
         """Format a graph axis value according to the active metric."""
-        if self.view_mode.get() == "% Growth":
+        if self.view_mode.get() in {"% Growth Since Start", "% Day's Gain/Loss"}:
             return f"{value:+.1f}%"
         return self._format_currency_axis(value)
 

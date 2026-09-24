@@ -1,3 +1,0 @@
-"""
-Financial Model GUI package.
-"""

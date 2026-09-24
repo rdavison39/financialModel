@@ -36,11 +36,13 @@ class AccountComparisonTab(ttk.Frame):
         self._last_histories: dict[int, list[AccountHistoryPoint]] = {}
         self._last_accounts: dict[int, AccountComparison] = {}
         self._last_benchmark: list = []
+        self._benchmark_previous_value: Decimal | None = None
         self._navigation_account_frame: ttk.LabelFrame | None = None
         self._ui_settings = UISettingsService()
         self._restoring_ui_settings = False
 
         self._build_ui()
+        self._update_benchmark_state()
         self._build_navigation_account_selector()
         for variable in (
             self.view_var,
@@ -99,13 +101,15 @@ class AccountComparisonTab(ttk.Frame):
             padx=(0, 5),
         )
 
-        self.view_var = tk.StringVar(value="Dollar Value")
+        self.view_var = tk.StringVar(value="Portfolio Value")
         view_combo = ttk.Combobox(
             controls,
             textvariable=self.view_var,
             values=(
-                "Dollar Value",
-                "% Growth",
+                "Portfolio Value",
+                "% Growth Since Start",
+                "Day's Gain/Loss",
+                "% Day's Gain/Loss",
             ),
             state="readonly",
             width=15,
@@ -617,19 +621,45 @@ class AccountComparisonTab(ttk.Frame):
         self.end_var.set(end.isoformat())
 
     def _view_changed(self, _event=None) -> None:
-        self._redraw()
+        """Refresh after changing the history metric."""
+        self._update_benchmark_state()
+        self._refresh_chart()
 
     def _benchmark_changed(self, _event=None) -> None:
-        if self.benchmark_var.get() == "Custom":
+        """Refresh after changing the benchmark."""
+        if not self._benchmark_is_supported():
+            self.benchmark_var.set("None")
+
+        if (
+            self.benchmark_var.get() == "Custom"
+            and self._benchmark_is_supported()
+        ):
             self.custom_benchmark_entry.grid()
         else:
             self.custom_benchmark_entry.grid_remove()
 
-        if self.benchmark_var.get() != "None":
-            self.view_var.set("% Growth")
-
         self._save_ui_settings()
         self._refresh_chart()
+
+    def _benchmark_is_supported(self) -> bool:
+        """Return whether the current view supports benchmark comparison."""
+        return self.view_var.get() in {
+            "% Growth Since Start",
+            "% Day's Gain/Loss",
+        }
+
+    def _update_benchmark_state(self) -> None:
+        """Enable benchmarks only for percentage-based views."""
+        if self._benchmark_is_supported():
+            self.benchmark_combo.configure(state="readonly")
+            if self.benchmark_var.get() == "Custom" and self.custom_benchmark_var.get().strip():
+                self.custom_benchmark_entry.grid()
+            else:
+                self.custom_benchmark_entry.grid_remove()
+        else:
+            self.benchmark_var.set("None")
+            self.benchmark_combo.configure(state="disabled")
+            self.custom_benchmark_entry.grid_remove()
 
     def _ui_setting_changed(self, *_args) -> None:
         self._save_ui_settings()
@@ -638,14 +668,21 @@ class AccountComparisonTab(ttk.Frame):
         values = self._ui_settings.get_screen("account_history")
         self._restoring_ui_settings = True
         try:
-            if values.get("view") in {"Dollar Value", "% Growth"}:
+            if values.get("view") in {
+                "Portfolio Value",
+                "% Growth Since Start",
+                "Day's Gain/Loss",
+                "% Day's Gain/Loss",
+            }:
                 self.view_var.set(values["view"])
             if values.get("period") in {
                 "1 Month", "3 Months", "6 Months", "YTD", "1 Year",
                 "3 Years", "5 Years", "All Time", "Custom",
             }:
                 self.period_var.set(values["period"])
-            if values.get("benchmark") in {"None", "S&P 500", "TSX Composite", "Custom"}:
+            if values.get("benchmark") in {
+                "None", "S&P 500", "TSX Composite", "Custom"
+            }:
                 self.benchmark_var.set(values["benchmark"])
             if isinstance(values.get("custom_benchmark"), str):
                 self.custom_benchmark_var.set(values["custom_benchmark"])
@@ -658,10 +695,7 @@ class AccountComparisonTab(ttk.Frame):
                 for account_id, variable in self._account_vars.items():
                     variable.set(account_id in selected)
 
-            if self.benchmark_var.get() == "Custom":
-                self.custom_benchmark_entry.grid()
-            else:
-                self.custom_benchmark_entry.grid_remove()
+            self._update_benchmark_state()
         except (TypeError, ValueError):
             pass
         finally:
@@ -725,6 +759,7 @@ class AccountComparisonTab(ttk.Frame):
             return
 
         start, end = parsed
+        self._benchmark_previous_value = None
 
         try:
             initialize_database()
@@ -736,6 +771,30 @@ class AccountComparisonTab(ttk.Frame):
                     start,
                     end,
                 )
+
+                # Performance views should only plot actual market trading
+                # days. A weekend or market holiday can have a stored
+                # account snapshot, but it is not a trading-day performance
+                # observation. Use the TSX Composite as the market calendar
+                # so statutory/market holidays are handled without
+                # maintaining our own holiday list.
+                if self.view_var.get() in {
+                    "% Growth Since Start",
+                    "Day's Gain/Loss",
+                    "% Day's Gain/Loss",
+                }:
+                    trading_days = {
+                        point.snapshot_date
+                        for point in PortfolioHistoryService(session).get_benchmark_history(
+                            PortfolioHistoryService.BENCHMARKS["TSX Composite"],
+                            start,
+                            end,
+                        )
+                    }
+                    histories = self._filter_to_trading_days(
+                        histories,
+                        trading_days,
+                    )
 
                 benchmark_history = []
                 benchmark = self._benchmark_symbol()
@@ -761,13 +820,38 @@ class AccountComparisonTab(ttk.Frame):
                         )
 
                         if benchmark_start <= benchmark_end:
-                            benchmark_history = (
+                            benchmark_query_start = benchmark_start
+                            if self.view_var.get() == "% Day's Gain/Loss":
+                                benchmark_query_start = benchmark_start - timedelta(days=14)
+
+                            raw_benchmark_history = (
                                 PortfolioHistoryService(session).get_benchmark_history(
                                     benchmark,
-                                    benchmark_start,
+                                    benchmark_query_start,
                                     benchmark_end,
                                 )
                             )
+                            raw_benchmark_history = [
+                                point
+                                for point in raw_benchmark_history
+                                if point.snapshot_date.weekday() < 5
+                            ]
+
+                            if self.view_var.get() == "% Day's Gain/Loss":
+                                prior_points = [
+                                    point
+                                    for point in raw_benchmark_history
+                                    if point.snapshot_date < benchmark_start
+                                ]
+                                if prior_points:
+                                    self._benchmark_previous_value = prior_points[-1].value
+                                benchmark_history = [
+                                    point
+                                    for point in raw_benchmark_history
+                                    if point.snapshot_date >= benchmark_start
+                                ]
+                            else:
+                                benchmark_history = raw_benchmark_history
             finally:
                 session.close()
 
@@ -792,6 +876,7 @@ class AccountComparisonTab(ttk.Frame):
         return PortfolioHistoryService.BENCHMARKS.get(benchmark)
 
     def _benchmark_growth_values(self) -> list[Decimal]:
+        """Return benchmark growth from the first plotted close."""
         if not self._last_benchmark:
             return []
 
@@ -804,12 +889,99 @@ class AccountComparisonTab(ttk.Frame):
             for point in self._last_benchmark
         ]
 
+    def _benchmark_daily_change_percent_values(self) -> list[Decimal]:
+        """Return each benchmark trading day's change from its prior close."""
+        benchmark = sorted(
+            (
+                point
+                for point in getattr(self, "_last_benchmark", [])
+                if point.snapshot_date.weekday() < 5
+            ),
+            key=lambda point: point.snapshot_date,
+        )
+        if not benchmark:
+            return []
+
+        result: list[Decimal] = []
+        previous = getattr(self, "_benchmark_previous_value", None)
+
+        for point in benchmark:
+            if previous is None or previous == 0:
+                result.append(Decimal("0"))
+            else:
+                result.append(
+                    (point.value - previous)
+                    / previous
+                    * Decimal("100")
+                )
+            previous = point.value
+
+        return result
+
+    @staticmethod
+    def _filter_to_trading_days(
+        histories: dict[int, list[AccountHistoryPoint]],
+        trading_days: set[date],
+    ) -> dict[int, list[AccountHistoryPoint]]:
+        """Remove non-trading-day observations from performance histories."""
+        return {
+            account_id: [
+                point
+                for point in points
+                if point.snapshot_date.weekday() < 5
+                and point.snapshot_date in trading_days
+            ]
+            for account_id, points in histories.items()
+        }
+
+    @staticmethod
+    def _transform_account_history(
+        points: list[AccountHistoryPoint],
+        view: str,
+    ) -> list[Decimal]:
+        """Transform account snapshots into one of the four history views."""
+        if not points:
+            return []
+
+        values = [Decimal(str(point.total_value)) for point in points]
+        first = values[0]
+
+        if view == "Portfolio Value":
+            return values
+
+        if view == "% Growth Since Start":
+            if first == 0:
+                return [Decimal("0") for _ in values]
+            return [
+                (value - first) / first * Decimal("100")
+                for value in values
+            ]
+
+        if view == "Day's Gain/Loss":
+            return [
+                Decimal(str(point.daily_change))
+                if point.daily_change is not None
+                else Decimal("0")
+                for point in points
+            ]
+
+        return [
+            Decimal(str(point.daily_change_percent))
+            if point.daily_change_percent is not None
+            else Decimal("0")
+            for point in points
+        ]
+
     def _redraw(self) -> None:
         self.axis.clear()
 
         selected_ids = self._selected_ids()
         plotted = 0
-        percent_mode = self.view_var.get() == "% Growth"
+        view = self.view_var.get()
+        percent_mode = view in {
+            "% Growth Since Start",
+            "% Day's Gain/Loss",
+        }
 
         for account_id in selected_ids:
             points = self._last_histories.get(account_id, [])
@@ -821,16 +993,8 @@ class AccountComparisonTab(ttk.Frame):
                 continue
 
             dates = [point.snapshot_date for point in points]
-            values = [float(point.total_value) for point in points]
-
-            if percent_mode:
-                base = values[0]
-                if base == 0:
-                    continue
-                values = [
-                    ((value / base) - 1.0) * 100.0
-                    for value in values
-                ]
+            metric_values = self._transform_account_history(points, view)
+            values = [float(value) for value in metric_values]
 
             self.axis.plot(
                 dates,
@@ -842,8 +1006,14 @@ class AccountComparisonTab(ttk.Frame):
             )
             plotted += 1
 
-        benchmark_values = self._benchmark_growth_values()
-        if benchmark_values and percent_mode:
+        if view == "% Growth Since Start":
+            benchmark_values = self._benchmark_growth_values()
+        elif view == "% Day's Gain/Loss":
+            benchmark_values = self._benchmark_daily_change_percent_values()
+        else:
+            benchmark_values = []
+
+        if benchmark_values:
             benchmark_dates = [
                 point.snapshot_date for point in self._last_benchmark
             ]
@@ -857,14 +1027,24 @@ class AccountComparisonTab(ttk.Frame):
             plotted += 1
 
         if percent_mode:
-            self.axis.set_ylabel("Growth Since Start (%)")
-            self.axis.axhline(
-                0,
-                linewidth=0.8,
-                linestyle="--",
+            self.axis.set_ylabel(
+                "% Growth Since Start"
+                if view == "% Growth Since Start"
+                else "% Day's Gain/Loss"
             )
+            self.axis.axhline(0, linewidth=0.8, linestyle="--")
             self.axis.yaxis.set_major_formatter(
                 lambda value, _position: f"{value:+.1f}%"
+            )
+        elif view == "Day's Gain/Loss":
+            self.axis.set_ylabel("Day's Gain/Loss (CAD)")
+            self.axis.axhline(0, linewidth=0.8, linestyle="--")
+            self.axis.yaxis.set_major_formatter(
+                lambda value, _position: (
+                    f"${value / 1_000_000:+.1f}M"
+                    if abs(value) >= 1_000_000
+                    else f"${value / 1_000:+.0f}K"
+                )
             )
         else:
             self.axis.set_ylabel("Account Value (CAD)")
@@ -877,12 +1057,7 @@ class AccountComparisonTab(ttk.Frame):
             )
 
         self.axis.set_xlabel("Date")
-        self.axis.grid(
-            True,
-            axis="y",
-            linestyle=":",
-            linewidth=0.8,
-        )
+        self.axis.grid(True, axis="y", linestyle=":", linewidth=0.8)
 
         if plotted:
             self.axis.legend(
@@ -894,17 +1069,10 @@ class AccountComparisonTab(ttk.Frame):
             self.figure.tight_layout()
             self.chart_canvas.draw_idle()
 
-            benchmark_text = ""
-            if self.benchmark_var.get() != "None":
-                benchmark_text = (
-                    f" Benchmark synchronized to available account history."
-                )
-
             self.status_label.configure(
                 text=(
                     f"{plotted} series plotted. "
-                    f"{'Growth' if percent_mode else 'Dollar value'} view."
-                    f"{benchmark_text}"
+                    f"{self._view_status_text(view)}."
                 )
             )
         else:
@@ -923,6 +1091,15 @@ class AccountComparisonTab(ttk.Frame):
 
         self._populate_latest_values(selected_ids)
 
+    @staticmethod
+    def _view_status_text(view: str) -> str:
+        return {
+            "Portfolio Value": "Portfolio value view",
+            "% Growth Since Start": "Growth since start view",
+            "Day's Gain/Loss": "Day's gain/loss view",
+            "% Day's Gain/Loss": "Day's percentage gain/loss view",
+        }.get(view, view)
+
     def _populate_latest_values(self, selected_ids: list[int]) -> None:
         for item in self.history_tree.get_children():
             self.history_tree.delete(item)
@@ -935,13 +1112,29 @@ class AccountComparisonTab(ttk.Frame):
                 continue
 
             latest = points[-1]
+            view = self.view_var.get()
+            if view == "Portfolio Value":
+                display_value = f"${latest.total_value:,.2f}"
+            elif view == "% Growth Since Start":
+                base = points[0].total_value
+                growth = (
+                    (latest.total_value - base) / base * Decimal("100")
+                    if base != 0
+                    else Decimal("0")
+                )
+                display_value = f"{growth:+.2f}%"
+            elif view == "Day's Gain/Loss":
+                display_value = f"${latest.daily_change or Decimal('0'):+,.2f}"
+            else:
+                display_value = f"{latest.daily_change_percent or Decimal('0'):+.2f}%"
+
             self.history_tree.insert(
                 "",
                 "end",
                 values=(
                     account.label,
                     latest.snapshot_date.isoformat(),
-                    f"${latest.total_value:,.2f}",
+                    display_value,
                 ),
             )
 

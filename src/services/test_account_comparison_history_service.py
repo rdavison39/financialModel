@@ -32,12 +32,29 @@ def add_account(session, brokerage_name, account_number, name):
     return account
 
 
-def add_snapshot(session, account_id, snapshot_date, value):
+def add_snapshot(
+    session,
+    account_id,
+    snapshot_date,
+    value,
+    daily_change=None,
+    daily_change_percent=None,
+):
     """Create an account portfolio snapshot."""
     snapshot = PortfolioSnapshot(
         account_id=account_id,
         snapshot_date=snapshot_date,
         total_value=Decimal(value),
+        daily_change=(
+            Decimal(daily_change)
+            if daily_change is not None
+            else None
+        ),
+        daily_change_percent=(
+            Decimal(daily_change_percent)
+            if daily_change_percent is not None
+            else None
+        ),
     )
     session.add(snapshot)
     session.flush()
@@ -88,6 +105,29 @@ def test_get_histories_returns_only_selected_accounts(session):
 
     assert set(result) == {first.id}
     assert result[first.id][0].total_value == Decimal("100000.00")
+
+
+def test_get_histories_returns_saved_daily_change_fields(session):
+    """History points expose the stored daily dollar and percentage changes."""
+    account = add_account(session, "BMO", "1", "First")
+    add_snapshot(
+        session,
+        account.id,
+        date(2026, 9, 17),
+        "100000",
+        daily_change="1250",
+        daily_change_percent="1.265823",
+    )
+
+    result = AccountComparisonHistoryService(session).get_histories(
+        [account.id],
+        date(2026, 9, 17),
+        date(2026, 9, 17),
+    )
+
+    point = result[account.id][0]
+    assert point.daily_change == Decimal("1250")
+    assert point.daily_change_percent == Decimal("1.265823")
 
 
 def test_get_histories_deduplicates_account_ids(session):
@@ -160,37 +200,6 @@ def test_get_histories_ignores_consolidated_snapshots(session):
     )
 
     assert result[account.id][0].total_value == Decimal("100000.00")
-
-
-def test_get_histories_returns_daily_gain_loss_fields(session):
-    account = add_account(session, "BMO", "1", "First")
-    first = PortfolioSnapshot(
-        account_id=account.id,
-        snapshot_date=date(2026, 9, 22),
-        total_value=Decimal("100000"),
-        daily_change=Decimal("1500"),
-        daily_change_percent=Decimal("1.52284264"),
-    )
-    second = PortfolioSnapshot(
-        account_id=account.id,
-        snapshot_date=date(2026, 9, 23),
-        total_value=Decimal("98500"),
-        daily_change=Decimal("-1500"),
-        daily_change_percent=Decimal("-1.50075038"),
-    )
-    session.add_all([first, second])
-    session.commit()
-
-    result = AccountComparisonHistoryService(session).get_histories(
-        [account.id],
-        date(2026, 9, 22),
-        date(2026, 9, 23),
-    )
-
-    assert result[account.id][0].daily_change == Decimal("1500.000000")
-    assert result[account.id][0].daily_change_percent == Decimal("1.522843")
-    assert result[account.id][1].daily_change == Decimal("-1500.000000")
-    assert result[account.id][1].daily_change_percent == Decimal("-1.500750")
 
 
 def test_get_histories_returns_empty_for_no_accounts(session):

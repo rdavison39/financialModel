@@ -66,3 +66,54 @@ def test_preferred_share_can_use_daily_data_when_intraday_fails(
     assert result.is_current is True
     assert result.price == Decimal("22.93")
     assert result.previous_close == Decimal("22.93")
+
+
+def test_tsx_uses_yahoo_quote_previous_close_when_daily_history_has_gap(
+    monkeypatch,
+):
+    from datetime import datetime
+
+    class FakeDateTime:
+        @staticmethod
+        def now(tz):
+            return datetime(2026, 9, 23, 23, 8, 13, tzinfo=tz)
+
+    daily_history = pd.DataFrame(
+        {"Close": [36009.40, 35751.43]},
+        index=pd.to_datetime(
+            ["2026-09-21", "2026-09-23"]
+        ).tz_localize("America/New_York"),
+    )
+
+    class FakeTicker:
+        @property
+        def info(self):
+            return {"previousClose": 36335.61}
+
+        def history(self, **kwargs):
+            if kwargs.get("period") == "10d":
+                return daily_history
+            if kwargs.get("start") == "2026-09-18":
+                return daily_history
+            if kwargs.get("interval") == "1m":
+                return pd.DataFrame(columns=["Close"])
+            raise AssertionError(f"Unexpected history request: {kwargs}")
+
+    monkeypatch.setattr(
+        "src.services.market_price_service.datetime",
+        FakeDateTime,
+    )
+    monkeypatch.setattr(
+        "src.services.market_price_service.yf.Ticker",
+        lambda symbol: FakeTicker(),
+    )
+
+    service = MarketPriceService()
+    result = service.get_price("^GSPTSE")
+
+    assert result.price == Decimal("35751.43")
+    assert result.previous_close == Decimal("36335.61")
+    assert result.change == Decimal("-584.18")
+    assert result.change_percent == (
+        Decimal("-584.18") / Decimal("36335.61") * Decimal("100")
+    )

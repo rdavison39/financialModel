@@ -35,11 +35,13 @@ class AccountComparison:
 
 @dataclass(frozen=True)
 class AccountHistoryPoint:
-    """One historical valuation for one account."""
+    """One historical valuation and market-day performance for one account."""
 
     account_id: int
     snapshot_date: date
     total_value: Decimal
+    daily_change: Decimal | None = None
+    daily_change_percent: Decimal | None = None
 
 
 class AccountComparisonHistoryService:
@@ -105,6 +107,16 @@ class AccountComparisonHistoryService:
                     account_id=row.account_id,
                     snapshot_date=row.snapshot_date,
                     total_value=Decimal(str(row.total_value)),
+                    daily_change=(
+                        Decimal(str(row.daily_change))
+                        if row.daily_change is not None
+                        else None
+                    ),
+                    daily_change_percent=(
+                        Decimal(str(row.daily_change_percent))
+                        if row.daily_change_percent is not None
+                        else None
+                    ),
                 )
             )
 
