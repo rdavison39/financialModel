@@ -1,89 +1,93 @@
-git status
-git add src/gui/accounts_tab.py
-git commit -m "goog working order"
-git tag -a sprint-3.3.0    -m "Good working order"
-git push origin main
-git push origin sprint-3.3.0
-
-
 # Davison Financial Model — Developer README
 
-This README is the quick-start document for returning to the project after a long break.
+**Current handoff:** September 29, 2026
 
-For the complete context, also read:
+This is the quick-start and return-to-project document. Read this together with:
 
 ```text
 PROJECT_OVERVIEW.md
 PROJECT_STATE.md
 ARCHITECTURE.md
 DATA_MODEL.md
+Sprint 4 - web based
 ```
+
+## CURRENT STATUS
+
+The project is a working Windows financial-model application plus a completed Windows-developed web implementation.
+
+**Latest full test result reported by the user: 137 tests passed.**
+
+Sprint 4:
+
+```text
+4.1  API Foundation                 COMPLETE
+4.2  Read-only Financial API        COMPLETE
+4.3  Web Application Shell          COMPLETE
+4.4  Web Portfolio                  COMPLETE
+4.5  Web History                    COMPLETE
+4.6  Web Account Management         COMPLETE
+4.7  Web Import                     COMPLETE
+4.8  Raspberry Pi Deployment        PREPARED; Pi not yet deployed
+4.9A Windows/WireGuard Validation   COMPLETE
+4.9B Pi + WireGuard                 NEXT
+```
+
+Do not start 4.9B until the Pi/NVMe environment is available.
 
 ---
 
-# Start the Application
+# 1. Windows Development
 
-From the project root:
+Activate the virtual environment:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+Start the desktop application:
 
 ```text
 python -m src.gui.app
 ```
 
-On Windows, the project also includes:
+Windows launcher:
 
 ```text
 run_financical_model.bat
 ```
 
-The batch file activates `.venv` and starts the application.
+Run the full test suite:
+
+```text
+python -m pytest -q
+```
+
+For a major change, run the full suite before declaring the change complete.
 
 ---
 
-# Run Tests
+# 2. Web Application on Windows
+
+FastAPI entry point:
 
 ```text
-python -m pytest
+src/api/main.py
 ```
 
-Pytest is configured in:
+Development server:
 
 ```text
-pyproject.toml
+uvicorn src.api.main:app --reload
 ```
 
----
+Expected health response:
 
-# Python Version
-
-The project requires:
-
-```text
-Python 3.13+
+```json
+{"status":"ok"}
 ```
 
----
-
-# Dependencies
-
-Declared in `pyproject.toml`:
-
-```text
-sqlalchemy>=2.0
-openpyxl>=3.1
-yfinance>=1.4
-```
-
----
-
-# Main Application
-
-Entry point:
-
-```text
-src/gui/app.py
-```
-
-Navigation:
+The web navigation is:
 
 ```text
 Portfolio
@@ -94,11 +98,13 @@ Holdings History
 Import
 ```
 
+The web implementation uses the existing service layer. Do not duplicate financial calculations in FastAPI route functions.
+
 ---
 
-# Database
+# 3. Database
 
-SQLite database:
+Current Windows database:
 
 ```text
 database/financial_model.db
@@ -111,320 +117,308 @@ src/database.py
 src/database_init.py
 ```
 
-Models:
+The current database path is derived from the project root. This is useful for Pi deployment because moving the project directory does not require hard-coding a Windows path.
 
-```text
-src/models/
-```
+Do not open the SQLite file over a network share. The long-term design is that the Pi is the single SQLite owner and clients use HTTP/HTTPS API calls.
 
 ---
 
-# Database Migrations
+# 4. Database Migration Warning
 
-Alembic configuration:
-
-```text
-alembic.ini
-alembic/
-```
-
-Before modifying the database, make a backup.
-
-Then inspect:
-
-```text
-alembic current
-alembic heads
-```
-
-The reviewed database's Alembic revision was:
+The reviewed database reported:
 
 ```text
 7c1d4e8a2b6f
 ```
 
-but later migration files are present in the repository, so migration state needs to be checked rather than assumed.
+as its Alembic revision while later migration files exist.
+
+Before any schema change:
+
+```text
+1. Back up database/financial_model.db
+2. Run: alembic current
+3. Run: alembic heads
+4. Inspect the actual schema
+5. Determine the correct migration state
+```
+
+Do **not** blindly run `alembic upgrade head` against the existing database.
+
+Sprint 4.8 deliberately does not run migrations.
 
 ---
 
-# GUI Settings
+# 5. Important Architecture Rules
 
-Persistent GUI settings:
+Preserve these rules:
 
-```text
-%APPDATA%\FinancialModel\ui_settings.json
-```
-
-Service:
-
-```text
-src/services/ui_settings_service.py
-```
-
-The settings file is for UI preferences, not financial data.
-
-Dates are intentionally not persisted.
-
----
-
-# Important Date Rule
-
-Default transient date behavior:
-
-```text
-To   = today
-From = today - 1 year
-```
-
-History screens with named periods calculate their dates from today's date.
-
-Do not reintroduce date persistence.
-
----
-
-# Important Account Concepts
-
-There are two different kinds of account selection.
-
-## Portfolio inclusion
-
-Stored in the database:
-
-```text
-Account.include_in_portfolio
-```
-
-This controls consolidated portfolio calculations/export.
-
-## History-screen checkboxes
-
-Used for analysis on:
-
-- Portfolio History
-- Account History
-- Holdings History
-
-These are UI preferences and are stored outside the database.
-
----
-
-# Holdings History
-
-File:
-
-```text
-src/gui/comparison_tab.py
-```
-
-The stable account selection identifier is:
+- Keep the existing Tkinter GUI operational.
+- Keep business logic in services.
+- Keep brokerage parsing in brokerage importers.
+- Keep historical brokerage facts separate from current valuation.
+- Use `Decimal` for financial calculations.
+- Do not persist history-screen dates.
+- Do not confuse `Account.include_in_portfolio` with history-screen checkbox selections.
+- Use the stable history-selection key:
 
 ```text
 Brokerage|AccountNumber|AccountName
 ```
 
-This is important because the database integer ID is not the preferred long-term UI identity.
+- Do not remove working functionality.
+- Make small, controlled changes.
+- Add tests for new behavior.
+- Provide incremental ZIPs containing only changed/new files unless a complete project replacement is explicitly requested.
 
 ---
 
-# Importers
+# 6. Sprint 4.8 — Raspberry Pi Deployment
 
-BMO:
+Deployment ZIP:
 
 ```text
-src/importers/bmo_importer.py
+Sprint_4.8_Raspberry_Pi_Deployment.zip
 ```
 
-Nesbitt Burns:
+Files:
 
 ```text
-src/importers/nesbitt_importer.py
+deploy/README.md
+deploy/financial-model.service.template
+deploy/install_pi.sh
+tests/test_pi_deployment.py
 ```
 
-Bulk directory import:
+The Pi is intended to own:
 
 ```text
-src/services/bulk_import_service.py
+FastAPI
+services
+SQLAlchemy
+SQLite
+brokerage importers
+market-data functionality
 ```
 
-Database import:
+The Windows desktop should not open the Pi's SQLite file directly.
+
+The installer is run on the Pi as:
+
+```bash
+sudo ./deploy/install_pi.sh /home/ron/financialModel ron
+```
+
+The exact application directory and service user may differ; use the actual Pi values.
+
+The installer expects the project and existing database to already be copied to the Pi. It does not run Alembic migrations.
+
+---
+
+# 7. Planned Pi NVMe Storage
+
+The user plans to use:
 
 ```text
-src/services/import_service.py
+Official Raspberry Pi M.2 HAT+
+2242 NVMe SSD
+```
+
+The intended final arrangement is:
+
+```text
+Pi 5
+ |
+ M.2 HAT+
+ |
+ NVMe
+ +-- Raspberry Pi OS
+ +-- Financial Model
+ +-- SQLite database
+ +-- backups
+```
+
+Do not make application changes solely to support the NVMe. The existing database-path design should be sufficient once the project is installed on the Pi.
+
+---
+
+# 8. Sprint 4.9A — Windows/WireGuard Validation
+
+ZIP:
+
+```text
+Sprint_4.9A_Windows_WireGuard_Validation.zip
+```
+
+This stage validates the configuration/documentation on Windows without needing the Pi.
+
+It does not establish that the actual Pi WireGuard tunnel works.
+
+Never expose an unauthenticated FastAPI port directly to the public Internet.
+
+The intended remote path is:
+
+```text
+iPhone / laptop
+      |
+  WireGuard
+      |
+ Home network
+      |
+ Raspberry Pi
+      |
+ FastAPI
+      |
+ SQLite
 ```
 
 ---
 
-# Valuation
+# 9. Sprint 4.9B — Next Step When Pi Is Available
 
-Main valuation service:
+Use this sequence:
 
-```text
-src/services/portfolio_valuation_service.py
+### A. Prepare NVMe
+
+Install the M.2 HAT+ and NVMe in the Pi 5 and install/boot Raspberry Pi OS from NVMe.
+
+### B. Copy the tested application
+
+Copy the complete tested project, including the existing database, to the Pi.
+
+Do not create a new empty database unless intentionally testing a fresh installation.
+
+### C. Install the deployment
+
+From the project root on the Pi:
+
+```bash
+sudo ./deploy/install_pi.sh <application-directory> <service-user>
 ```
 
-Portfolio data:
+### D. Verify the service
 
-```text
-src/services/portfolio_service.py
+```bash
+systemctl status financial-model
+journalctl -u financial-model -n 100 --no-pager
 ```
 
-Market prices:
+### E. Verify API
 
-```text
-src/services/market_price_service.py
+On the Pi:
+
+```bash
+curl http://127.0.0.1:8000/api/health
 ```
 
-Market data provider:
+Expected:
 
-```text
-Yahoo Finance / yfinance
+```json
+{"status":"ok"}
 ```
 
----
+### F. Verify from LAN
 
-# Financial Calculation Rule
+Find the Pi address:
 
-Use:
-
-```text
-Decimal
+```bash
+hostname -I
 ```
 
-for financial calculations.
+From a PC/phone on the same LAN, open:
 
-Do not introduce float-based financial arithmetic.
+```text
+http://<pi-ip>:8000/
+```
 
----
-
-# Historical Data Rule
-
-Brokerage imports are historical facts.
-
-Do not change:
-
-- historical quantities
-- historical cash
-- historical brokerage values
-
-just because current market prices changed.
-
-Calculated valuation belongs in portfolio valuation/snapshot structures.
-
----
-
-# Current Screen Files
+Test every web screen:
 
 ```text
 Portfolio
-    src/gui/portfolio_tab.py
-
 Portfolio History
-    src/gui/graphs_tab.py
-
 Account Management
-    src/gui/accounts_tab.py
-
 Account History
-    src/gui/account_comparison_tab.py
-
 Holdings History
-    src/gui/comparison_tab.py
-
 Import
-    src/gui/import_tab.py
+```
+
+Test both BMO and Nesbitt import workflows using known-good files.
+
+### G. Verify database ownership
+
+Confirm the application is using the Pi-local database and that Windows is not opening the SQLite file over a network share.
+
+### H. Configure WireGuard
+
+Use the 4.9A configuration templates as the starting point.
+
+Do not invent or reuse example private keys. Generate actual keys on the appropriate machines.
+
+Use the real home LAN subnet, WireGuard subnet, Pi address, endpoint/public IP or DNS name, and router configuration.
+
+### I. Test remotely
+
+With the phone/laptop away from the home LAN:
+
+1. Enable WireGuard.
+2. Verify the VPN tunnel.
+3. Open the Financial Model web application through the Pi's WireGuard address.
+4. Test Portfolio, History, Account Management and Import.
+5. Confirm the connection does not require exposing TCP 8000 directly to the Internet.
+
+### J. Final test
+
+After Pi deployment changes, run the application's test suite on the supported environment if practical. Record the actual result; do not copy the Windows 137-test result and call it a Pi result.
+
+---
+
+# 10. What NOT to Do During 4.9B
+
+Do not:
+
+- expose port 8000 directly to the Internet,
+- put SQLite on a network share,
+- blindly run Alembic migrations,
+- replace the desktop application,
+- rewrite the importers,
+- introduce PostgreSQL just for Pi deployment,
+- change the database schema without a demonstrated requirement,
+- overwrite the existing database without a backup.
+
+---
+
+# 11. Key Source Locations
+
+```text
+src/api/main.py
+src/api/schemas.py
+src/database.py
+src/importers/bmo_importer.py
+src/importers/nesbitt_importer.py
+src/services/import_service.py
+src/services/bulk_import_service.py
+src/services/account_service.py
+src/services/account_export_service.py
+src/services/portfolio_service.py
+src/services/portfolio_valuation_service.py
+src/services/market_price_service.py
+src/services/portfolio_history_service.py
+src/services/account_comparison_history_service.py
+src/services/portfolio_comparison_service.py
+src/services/ui_settings_service.py
 ```
 
 ---
 
-# Development Rules
+# 12. Return-to-Project Procedure
 
-Before making a change:
+If a new ChatGPT session is started:
 
-1. Read the relevant documentation.
-2. Inspect the actual source file.
-3. Identify existing functionality that must remain.
-4. Make the smallest appropriate change.
-5. Run targeted tests.
-6. Run the full suite for substantial changes.
-7. Update documentation if architecture or behavior changes.
+1. Feed all six files in `docs/`.
+2. Tell ChatGPT this is the Davison Financial Model project.
+3. Tell it the current status is Sprint 4.9A complete, 4.9B pending Pi availability, and the latest full Windows test result is 137 passed.
+4. If continuing Pi work, provide the latest project ZIP as well.
+5. Ask ChatGPT to inspect the actual current source before changing anything.
+6. Do not rely on memory for exact file contents.
 
-Do not delete existing functionality unless explicitly requested.
-
----
-
-# Known Issues to Revisit
-
-## Account Management date behavior
-
-The current account-selection implementation can load historical import dates into the From/To fields.
-
-The intended behavior is:
-
-```text
-From = today - 1 year
-To   = today
-```
-
-and those dates should not persist.
-
-## Alembic/database state
-
-The database reports revision:
-
-```text
-7c1d4e8a2b6f
-```
-
-while later migrations exist and the database schema already contains some later fields.
-
-This needs careful reconciliation before future migration work.
-
----
-
-# Cleanup
-
-Potentially disposable development files include:
-
-```text
-.venv/
-Makefile
-requirements-dev.txt
-prune_financial_model.py
-scripts/
-```
-
-Do not delete `scripts/` until any one-time database maintenance scripts are confirmed unnecessary.
-
-Keep:
-
-```text
-src/
-tests/
-docs/
-alembic/
-database/
-data/uploads/
-pyproject.toml
-requirements.txt
-run_financical_model.bat
-```
-
----
-
-# If Returning After Months Away
-
-The fastest safe restart process is:
-
-```text
-1. Read docs/*.md and docs/README
-2. Inspect git status
-3. Inspect pyproject.toml
-4. Back up database/financial_model.db
-5. Check Alembic state
-6. Activate .venv
-7. Run pytest
-8. Start the GUI
-9. Only then begin development
-```
-
-The documentation files are intended to preserve enough project context that the original development conversation is not required.
+The documents are intended to preserve enough context to resume deployment and testing without the original conversation.

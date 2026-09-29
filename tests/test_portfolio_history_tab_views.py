@@ -143,3 +143,34 @@ def test_portfolio_history_filters_weekends_and_holidays_from_performance_views(
         date(2026, 9, 18),
         date(2026, 9, 21),
     ]
+
+
+def test_portfolio_history_brokerage_comparison_groups_selected_accounts():
+    tab = GraphsTab.__new__(GraphsTab)
+    tab._account_brokerages = {
+        1: "BMO",
+        2: "NB",
+        3: "BMO",
+        4: "OTHER",
+    }
+
+    assert tab._selected_accounts_by_brokerage([1, 2, 3, 4]) == {
+        "BMO": [1, 3],
+        "NB": [2],
+    }
+
+
+def test_portfolio_history_brokerage_name_normalization():
+    assert GraphsTab._brokerage_group("BMO") == "BMO"
+    assert GraphsTab._brokerage_group("NB") == "NB"
+    assert GraphsTab._brokerage_group("Nesbitt Burns") == "NB"
+
+
+def test_portfolio_history_brokerage_lines_are_percentage_only():
+    source = open("src/gui/graphs_tab.py", encoding="utf-8").read()
+    assert '"% Growth Since Start"' in source
+    assert '"% Day\'s Gain/Loss"' in source
+    assert '"Brokerage Lines:"' in source
+    assert '"BMO": tk.BooleanVar(value=False)' in source
+    assert '"NB": tk.BooleanVar(value=False)' in source
+    assert 'self._selected_accounts_by_brokerage(' in source

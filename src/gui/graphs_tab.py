@@ -36,6 +36,9 @@ class GraphsTab(ttk.Frame):
         self._last_history: list[PortfolioHistoryPoint] = []
         self._last_benchmark = []
         self._benchmark_previous_value = None
+        self._last_brokerage_histories: dict[str, list[PortfolioHistoryPoint]] = {}
+        self._account_brokerages: dict[int, str] = {}
+        self._brokerage_vars: dict[str, tk.BooleanVar] = {}
         self._navigation_account_frame: ttk.LabelFrame | None = None
         self._history_frame: ttk.LabelFrame | None = None
         self._ui_settings = UISettingsService()
@@ -205,6 +208,27 @@ class GraphsTab(ttk.Frame):
             text="Refresh",
             command=self._refresh,
         ).grid(row=1, column=4, columnspan=3, pady=(8, 0), sticky="e")
+
+        ttk.Label(controls, text="Brokerage Lines:").grid(
+            row=2, column=0, padx=(0, 5), pady=(8, 0), sticky="w"
+        )
+
+        self._brokerage_vars = {
+            "BMO": tk.BooleanVar(value=False),
+            "NB": tk.BooleanVar(value=False),
+        }
+        self._brokerage_checkbuttons: dict[str, ttk.Checkbutton] = {}
+        for column, brokerage_name in enumerate(("BMO", "NB"), start=1):
+            checkbutton = ttk.Checkbutton(
+                controls,
+                text=brokerage_name,
+                variable=self._brokerage_vars[brokerage_name],
+                command=self._brokerage_display_changed,
+            )
+            checkbutton.grid(row=2, column=column, padx=(0, 12), pady=(8, 0), sticky="w")
+            self._brokerage_checkbuttons[brokerage_name] = checkbutton
+
+        self._update_brokerage_line_state()
 
         graph_frame = ttk.LabelFrame(
             self,
@@ -475,6 +499,7 @@ class GraphsTab(ttk.Frame):
 
             self._account_names.clear()
             self._account_vars.clear()
+            self._account_brokerages.clear()
 
             for index, (account, brokerage) in enumerate(rows):
                 full_name = (
@@ -486,6 +511,7 @@ class GraphsTab(ttk.Frame):
                 variable = tk.BooleanVar(value=True)
                 self._account_names[account.id] = full_name
                 self._account_vars[account.id] = variable
+                self._account_brokerages[account.id] = self._brokerage_group(brokerage.name)
 
                 ttk.Checkbutton(
                     self.account_inner,
@@ -552,7 +578,32 @@ class GraphsTab(ttk.Frame):
     def _view_changed(self, _event=None) -> None:
         """Refresh after changing the history metric."""
         self._update_benchmark_state()
+        self._update_brokerage_line_state()
         self._refresh()
+
+    def _brokerage_display_changed(self) -> None:
+        """Refresh after changing which brokerage comparison lines are shown."""
+        self._refresh()
+
+    def _update_brokerage_line_state(self) -> None:
+        """Enable brokerage comparison lines only for percentage views."""
+        supported = self.view_mode.get() in {
+            "% Growth Since Start",
+            "% Day's Gain/Loss",
+        }
+        state = "normal" if supported else "disabled"
+        for checkbutton in self._brokerage_checkbuttons.values():
+            checkbutton.configure(state=state)
+
+    @staticmethod
+    def _brokerage_group(name: str) -> str:
+        """Map a stored brokerage name to a comparison group."""
+        normalized = name.strip().upper()
+        if normalized == "BMO":
+            return "BMO"
+        if normalized in {"NB", "NESBITT BURNS"}:
+            return "NB"
+        return normalized
 
     def _benchmark_changed(self, _event=None) -> None:
         """Show custom symbol entry only when the selected view supports benchmarks."""
@@ -614,6 +665,18 @@ class GraphsTab(ttk.Frame):
             if variable.get()
         ]
 
+    def _selected_accounts_by_brokerage(
+        self,
+        account_ids: list[int],
+    ) -> dict[str, list[int]]:
+        """Group selected accounts into the BMO and NB comparison groups."""
+        grouped: dict[str, list[int]] = {"BMO": [], "NB": []}
+        for account_id in account_ids:
+            brokerage = self._account_brokerages.get(account_id)
+            if brokerage in grouped:
+                grouped[brokerage].append(account_id)
+        return grouped
+
     def _update_selected_accounts_label(self) -> None:
         """Update the selected-account count."""
         selected = len(self._selected_account_ids())
@@ -644,6 +707,7 @@ class GraphsTab(ttk.Frame):
         if not account_ids:
             self._last_history = []
             self._last_benchmark = []
+            self._last_brokerage_histories = {}
             self._display_history([])
             self._draw_graph([])
             self.status_label.configure(text="No accounts selected.")
@@ -695,6 +759,38 @@ class GraphsTab(ttk.Frame):
                         history,
                         trading_days,
                     )
+
+                self._last_brokerage_histories = {}
+                if (
+                    self.view_mode.get() in {
+                        "% Growth Since Start",
+                        "% Day's Gain/Loss",
+                    }
+                    and history
+                ):
+                    selected_by_brokerage = self._selected_accounts_by_brokerage(
+                        account_ids
+                    )
+
+                    for brokerage_name, brokerage_account_ids in selected_by_brokerage.items():
+                        if not self._brokerage_vars[brokerage_name].get() or not brokerage_account_ids:
+                            continue
+                        brokerage_history = service.get_aggregated_history(
+                            start_date=start_date,
+                            end_date=end_date,
+                            account_ids=brokerage_account_ids,
+                        )
+                        if self.view_mode.get() in {
+                            "% Growth Since Start",
+                            "Day's Gain/Loss",
+                            "% Day's Gain/Loss",
+                        }:
+                            brokerage_history = self._filter_to_trading_days(
+                                brokerage_history,
+                                trading_days,
+                            )
+                        if brokerage_history:
+                            self._last_brokerage_histories[brokerage_name] = brokerage_history
 
                 benchmark_history = []
                 benchmark = self._benchmark_symbol()
@@ -985,9 +1081,19 @@ class GraphsTab(ttk.Frame):
         else:
             benchmark_values = []
 
+        brokerage_values: dict[str, list[Decimal]] = {}
+        if self.view_mode.get() in {
+            "% Growth Since Start",
+            "% Day's Gain/Loss",
+        }:
+            for brokerage_name, brokerage_history in self._last_brokerage_histories.items():
+                brokerage_values[brokerage_name] = self._transform_history(brokerage_history)
+
         all_values = list(values)
         if benchmark_values:
             all_values.extend(benchmark_values)
+        for comparison_values in brokerage_values.values():
+            all_values.extend(comparison_values)
 
         minimum = min(all_values)
         maximum = max(all_values)
@@ -1086,6 +1192,31 @@ class GraphsTab(ttk.Frame):
                     anchor="s",
                 )
 
+        brokerage_colors = {"BMO": "#1f77b4", "NB": "#d62728"}
+        legend_entries: list[tuple[str, str, bool]] = []
+
+        for brokerage_name, comparison_values in brokerage_values.items():
+            brokerage_points = self._make_points(
+                comparison_values,
+                history_count=len(comparison_values),
+                left=left,
+                top=top,
+                graph_width=graph_width,
+                graph_height=graph_height,
+                graph_min=graph_min,
+                graph_max=graph_max,
+            )
+            if len(brokerage_points) >= 2:
+                flattened = []
+                for x, y in brokerage_points:
+                    flattened.extend((x, y))
+                canvas.create_line(
+                    *flattened,
+                    width=2,
+                    fill=brokerage_colors[brokerage_name],
+                )
+            legend_entries.append((brokerage_name, brokerage_colors[brokerage_name], False))
+
         if benchmark_values:
             benchmark_points = self._make_benchmark_points(
                 benchmark_values,
@@ -1107,21 +1238,28 @@ class GraphsTab(ttk.Frame):
                     dash=(7, 4),
                 )
 
+            legend_entries.append((self.benchmark.get(), "black", True))
+
+        if legend_entries:
             legend_y = top + 10
-            canvas.create_line(
-                width - 230,
-                legend_y,
-                width - 200,
-                legend_y,
-                width=2,
-                dash=(7, 4),
-            )
-            canvas.create_text(
-                width - 195,
-                legend_y,
-                text=self.benchmark.get(),
-                anchor="w",
-            )
+            legend_x = width - 250
+            for name, line_color, dashed in legend_entries:
+                canvas.create_line(
+                    legend_x,
+                    legend_y,
+                    legend_x + 30,
+                    legend_y,
+                    width=2,
+                    fill=line_color,
+                    dash=(7, 4) if dashed else (),
+                )
+                canvas.create_text(
+                    legend_x + 35,
+                    legend_y,
+                    text=name,
+                    anchor="w",
+                )
+                legend_y += 16
 
         label_count = min(6, len(history))
         label_indexes = (

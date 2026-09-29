@@ -1,0 +1,574 @@
+# Sprint 4 — Web-Based Financial Model / Raspberry Pi Deployment
+
+**Updated:** September 29, 2026
+
+This is the current Sprint 4 handoff document. It records what was planned, what has been completed, what artifacts were produced, and exactly how to resume when the Raspberry Pi is available.
+
+---
+
+# 1. Sprint Objective
+
+Sprint 4 adds a web-based implementation of the Financial Model that can ultimately run on a Raspberry Pi 5.
+
+The existing Windows Tkinter desktop application remains operational.
+
+Target architecture:
+
+```text
+Windows Desktop (Tkinter)          Web Browser
+        |                              |
+        | existing/local               | HTTP/HTTPS
+        v                              v
+     Services <-------------------- FastAPI
+        |                              |
+        +---------- SQLAlchemy --------+
+                       |
+                     SQLite
+                       |
+                Raspberry Pi 5
+```
+
+Long-term, the Raspberry Pi is the single owner of SQLite. Clients communicate through the API rather than opening SQLite over a network share.
+
+---
+
+# 2. Critical Development Principles
+
+Sprint 4 is additive.
+
+Do not:
+
+- replace the Tkinter GUI,
+- remove existing screens,
+- rewrite working services unnecessarily,
+- expose SQLite over a network share,
+- change the schema without a demonstrated requirement,
+- remove existing functionality,
+- rewrite BMO/Nesbitt importers merely for the web application,
+- expose an unauthenticated FastAPI port directly to the public Internet.
+
+Use existing services from the web/API layer. Keep financial/business calculations out of route functions.
+
+Use `Decimal` for financial values.
+
+---
+
+# 3. Current Test Baseline
+
+**Latest full-suite result reported by the user: 137 tests passed.**
+
+This is the current Windows project baseline.
+
+When deployment begins, report the actual Pi-side test result separately rather than assuming it matches the Windows result.
+
+---
+
+# 4. Stage Status
+
+| Stage | Status | Summary |
+|---|---|---|
+| 4.1 | COMPLETE | FastAPI foundation and health endpoint |
+| 4.2 | COMPLETE | Read-only financial API |
+| 4.3 | COMPLETE | Web shell/navigation/responsive CSS |
+| 4.4 | COMPLETE | Web Portfolio |
+| 4.5 | COMPLETE | Web Portfolio/Account/Holdings History |
+| 4.6 | COMPLETE | Web Account Management |
+| 4.7 | COMPLETE | Web Import |
+| 4.8 | PREPARED | Pi deployment artifacts; actual Pi deployment pending |
+| 4.9A | COMPLETE | Windows/WireGuard validation without Pi |
+| 4.9B | NEXT | Actual Pi deployment + WireGuard end-to-end |
+
+---
+
+# 5. Stage 4.1 — API Foundation — COMPLETE
+
+Implemented:
+
+```text
+src/api/__init__.py
+src/api/main.py
+tests/test_api.py
+requirements-web.txt
+```
+
+Endpoint:
+
+```text
+GET /api/health
+```
+
+Expected:
+
+```json
+{"status":"ok"}
+```
+
+---
+
+# 6. Stage 4.2 — Read-Only Financial API — COMPLETE
+
+Service-backed endpoints were added for accounts, portfolio/account information, holdings and history.
+
+API routes should continue to use existing services rather than duplicating financial calculations.
+
+The API returns DTO-style JSON values. Financial Decimal values are serialized safely rather than being converted into binary floating point for calculations.
+
+A reversed-history-date validation bug was fixed by validating dates before account lookup.
+
+---
+
+# 7. Stage 4.3 — Web Shell — COMPLETE
+
+Implemented the responsive FastAPI/Jinja2 shell with navigation for:
+
+```text
+Portfolio
+Portfolio History
+Account Management
+Account History
+Holdings History
+Import
+```
+
+The design is mobile-first for Safari/iPhone and also works on desktop.
+
+---
+
+# 8. Stage 4.4 — Web Portfolio — COMPLETE
+
+Web Portfolio includes:
+
+- total portfolio value,
+- today gain/loss and percentage,
+- TSX Composite daily percentage,
+- last updated time,
+- brokerage summaries,
+- included account summaries,
+- holdings counts,
+- refresh behavior.
+
+The web page uses the existing valuation/services rather than duplicating valuation calculations.
+
+---
+
+# 9. Stage 4.5 — Web History — COMPLETE
+
+Implemented web versions of:
+
+- Portfolio History,
+- Account History,
+- Holdings History.
+
+Views:
+
+```text
+Portfolio Value
+% Growth Since Start
+Day's Gain/Loss
+% Day's Gain/Loss
+```
+
+Rules:
+
+- `%` is the first character in percentage views.
+- Percentage graphs include a green 0% line.
+- Weekend/market-holiday dates are filtered for performance views rather than plotted as artificial zero-return days.
+- Portfolio Value can retain weekend/holiday values.
+- Account selections use the stable key:
+
+```text
+Brokerage|AccountNumber|AccountName
+```
+
+- `% Day's Gain/Loss` uses actual daily benchmark return for TSX rather than cumulative growth.
+- Selected accounts affect the history calculations.
+- Default dates are transient: From = today minus one year, To = today.
+
+The TSX daily calculation was specifically aligned to actual preceding TSX trading closes so a day such as September 23, 2026 can show the actual TSX daily return rather than a cumulative percentage.
+
+---
+
+# 10. Stage 4.6 — Web Account Management — COMPLETE
+
+Implemented web account management using `AccountService`.
+
+Current functionality includes:
+
+- account listing,
+- account number/brokerage display,
+- account name,
+- current value,
+- account type,
+- Include/Exclude status,
+- holdings count,
+- last import,
+- cash balances,
+- rename,
+- account settings,
+- links to Account History and Holdings History.
+
+The Include/Exclude database setting remains distinct from history-screen account selection.
+
+---
+
+# 11. Stage 4.7 — Web Import — COMPLETE
+
+Implemented web upload for:
+
+- BMO Excel files,
+- Nesbitt Burns Excel files.
+
+The existing flow is retained:
+
+```text
+Excel
+  |
+Brokerage Importer
+  |
+Imported structures
+  |
+ImportService
+  |
+SQLite
+```
+
+The web layer does not rewrite the brokerage importers.
+
+Import results report relevant account/snapshot/holdings/cash/duplicate information and errors.
+
+---
+
+# 12. Stage 4.8 — Raspberry Pi Deployment — PREPARED
+
+Deployment ZIP:
+
+```text
+Sprint_4.8_Raspberry_Pi_Deployment.zip
+```
+
+Files:
+
+```text
+deploy/README.md
+deploy/financial-model.service.template
+deploy/install_pi.sh
+tests/test_pi_deployment.py
+```
+
+The deployment service runs:
+
+```text
+uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+```
+
+The systemd service restarts on failure.
+
+The installer:
+
+- verifies application directory,
+- verifies service user,
+- verifies the existing database,
+- verifies requirements files,
+- creates `.venv`,
+- installs project and web requirements,
+- creates `financial-model.service`,
+- enables/restarts the service,
+- checks `/api/health` when `curl` exists.
+
+It deliberately does **not** run Alembic migrations.
+
+Tests actually run for the deployment artifact:
+
+```text
+3 passed
+```
+
+`bash -n deploy/install_pi.sh` also completed successfully.
+
+---
+
+# 13. Stage 4.9A — Windows/WireGuard Validation — COMPLETE
+
+This stage was created because the Pi was not available.
+
+ZIP:
+
+```text
+Sprint_4.9A_Windows_WireGuard_Validation.zip
+```
+
+Purpose:
+
+- validate WireGuard configuration structure,
+- document server/client configuration,
+- provide Windows-side web access validation,
+- establish firewall/routing guidance without inventing the user's real network values,
+- test deployment configuration/documentation.
+
+The configuration templates use placeholders. Do not use example private keys as real keys.
+
+Tests actually run for 4.9A:
+
+```text
+5 passed
+```
+
+4.9A does **not** prove an actual Pi WireGuard tunnel.
+
+---
+
+# 14. Planned Pi Storage
+
+The user has chosen an NVMe-based Pi installation.
+
+Hardware plan:
+
+```text
+Raspberry Pi 5
+    |
+Official Raspberry Pi M.2 HAT+
+    |
+2242 NVMe SSD
+```
+
+The HAT is the genuine Raspberry Pi M.2 HAT+ selected from CanaKit.
+
+The intention is to boot/use the Pi from NVMe and keep the application and SQLite database on the NVMe rather than relying on microSD for the long-term installation.
+
+A 2242 NVMe is required for the selected HAT configuration. Do not substitute a 2280 drive without a compatible HAT/adapter.
+
+---
+
+# 15. Stage 4.9B — Actual Pi Deployment — NEXT
+
+Do this only when the Pi/NVMe environment is available.
+
+## Step 1 — Prepare Pi/NVMe
+
+Install the official M.2 HAT+ and 2242 NVMe SSD.
+
+Install/boot the supported Raspberry Pi OS configuration from NVMe.
+
+## Step 2 — Copy the tested project
+
+Copy the complete tested Financial Model project to the Pi.
+
+Also copy the existing database:
+
+```text
+database/financial_model.db
+```
+
+Do not replace it with an empty database.
+
+## Step 3 — Back up database
+
+Before deployment/migration work, create a backup of the existing database.
+
+## Step 4 — Check database/migration state
+
+Do not blindly migrate.
+
+Inspect:
+
+```bash
+alembic current
+alembic heads
+```
+
+If schema changes are not required, leave the database untouched.
+
+## Step 5 — Install the application
+
+From the project root:
+
+```bash
+sudo ./deploy/install_pi.sh <application-directory> <service-user>
+```
+
+Example from the prepared documentation:
+
+```bash
+sudo ./deploy/install_pi.sh /home/ron/financialModel ron
+```
+
+Use the real username/path on the Pi.
+
+## Step 6 — Verify systemd
+
+```bash
+systemctl status financial-model
+journalctl -u financial-model -n 100 --no-pager
+```
+
+## Step 7 — Verify health locally
+
+```bash
+curl http://127.0.0.1:8000/api/health
+```
+
+Expected:
+
+```json
+{"status":"ok"}
+```
+
+## Step 8 — Verify LAN web access
+
+Get the Pi IP:
+
+```bash
+hostname -I
+```
+
+From a PC/phone on the same LAN:
+
+```text
+http://<pi-ip>:8000/
+```
+
+Test every screen:
+
+```text
+Portfolio
+Portfolio History
+Account Management
+Account History
+Holdings History
+Import
+```
+
+## Step 9 — Test imports
+
+Use known-good BMO and Nesbitt Excel files.
+
+Confirm:
+
+- import works,
+- duplicate behavior is preserved,
+- account/snapshot data is correct,
+- holdings and cash appear correctly.
+
+## Step 10 — Test market data/valuation
+
+Confirm the Pi can reach Yahoo Finance/yfinance and the Portfolio page displays current saved valuation data correctly.
+
+## Step 11 — Test database ownership
+
+Confirm the Pi is using its local NVMe database.
+
+Do not mount the database from Windows/NAS/network share.
+
+## Step 12 — Configure WireGuard
+
+Use the 4.9A templates as a starting point.
+
+Generate real keys.
+
+Replace placeholders with the actual:
+
+- Pi LAN address,
+- home LAN subnet,
+- WireGuard subnet,
+- Pi WireGuard address,
+- client WireGuard address,
+- endpoint/public IP or DNS name,
+- router port-forwarding information if required.
+
+Do not expose FastAPI port 8000 directly to the Internet.
+
+## Step 13 — Remote test
+
+From a device outside the home LAN:
+
+1. Enable WireGuard.
+2. Verify the tunnel.
+3. Open the Financial Model through the Pi's WireGuard address.
+4. Test all web screens.
+5. Test an import if practical.
+6. Confirm the application remains inaccessible through an unintended public TCP 8000 path.
+
+## Step 14 — Record actual results
+
+Record:
+
+- Pi OS version,
+- Python version,
+- NVMe model/capacity,
+- Pi IP,
+- WireGuard subnet,
+- FastAPI service status,
+- test count/result,
+- any deployment issues.
+
+Do not put private WireGuard keys into these documentation files.
+
+---
+
+# 16. What 4.9B Must Not Change
+
+Do not:
+
+- remove or rewrite Tkinter,
+- change financial calculations unnecessarily,
+- rewrite importers,
+- change the database schema merely for deployment,
+- expose unauthenticated FastAPI to the public Internet,
+- use a network share for SQLite,
+- run blind Alembic upgrades,
+- overwrite the existing database without backup.
+
+---
+
+# 17. Long-Term Architecture
+
+```text
+                         Internet / VPN
+                               |
+                  +------------+------------+
+                  |                         |
+             Windows PC                 iPhone/Browser
+             Tkinter GUI                    Web GUI
+                  |                         |
+                  +----------- HTTP --------+
+                              |
+                         WireGuard/LAN
+                              |
+                       Raspberry Pi 5
+                              |
+                 +------------+------------+
+                 |                         |
+              FastAPI                 Services
+                                           |
+                                       SQLAlchemy
+                                           |
+                                         SQLite
+                                           |
+                                       NVMe SSD
+```
+
+The Pi becomes the backend/database owner. The Windows desktop can eventually communicate with the backend API rather than directly opening SQLite when that architectural transition is deliberately implemented.
+
+---
+
+# 18. Resume Instructions for a Future ChatGPT Session
+
+If this project is handed back to ChatGPT after a break:
+
+1. Provide all files in `docs/`.
+2. Provide the latest project ZIP/source tree.
+3. State:
+
+```text
+Current sprint: 4.9A complete
+Next step: 4.9B Pi deployment + WireGuard end-to-end
+Latest Windows test result: 137 passed
+Pi: not yet deployed/tested
+Storage plan: official Raspberry Pi M.2 HAT+ + 2242 NVMe
+```
+
+4. Ask ChatGPT to inspect the actual current project before modifying anything.
+5. Do not ask it to regenerate files from memory.
+6. Keep changes incremental and test them.
+
+The first action should be an inspection, not a code change, unless the user has explicitly requested a change.

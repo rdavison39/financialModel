@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>{{ title }}</h1>
+        <p>{{ description }}</p>
+    </div>
+</div>
+
+{% if accounts %}
+<div class="accounts-list">
+{% for account in accounts %}
+<section class="data-card account-card {% if not account.include_in_portfolio %}account-excluded{% endif %}">
+    <div class="account-card-header">
+        <div>
+            <h2>{{ account.brokerage_name }} — {{ account.account_number }}</h2>
+            <div class="muted">{{ account.name }}</div>
+        </div>
+        <div class="account-value">
+            {% if account.current_value is not none %}${{ "{:,.2f}".format(account.current_value) }}{% else %}--{% endif %}
+        </div>
+    </div>
+
+    <div class="account-summary-grid">
+        <div><span class="metric-label">Account Type</span><strong>{{ account.account_type or "--" }}</strong></div>
+        <div><span class="metric-label">Included</span><strong>{{ "Yes" if account.include_in_portfolio else "No" }}</strong></div>
+        <div><span class="metric-label">Holdings</span><strong>{{ account.holdings_count }}</strong></div>
+        <div><span class="metric-label">Last Import</span><strong>{{ account.last_import or "--" }}</strong></div>
+    </div>
+
+    {% if account.cash_by_currency %}
+    <div class="account-cash">
+        <span class="metric-label">Cash</span>
+        {% for currency, amount in account.cash_by_currency.items() %}
+            <span>{{ currency }} ${{ "{:,.2f}".format(amount) }}</span>{% if not loop.last %} · {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <details class="account-settings">
+        <summary>Account Settings</summary>
+        <form method="post" action="/accounts/{{ account.account_id }}/rename" class="account-form">
+            <label>
+                <span>Account Name</span>
+                <input type="text" name="name" value="{{ account.name }}" required maxlength="100">
+            </label>
+            <button class="button" type="submit">Rename</button>
+        </form>
+
+        <form method="post" action="/accounts/{{ account.account_id }}/settings" class="account-form">
+            <label>
+                <span>Account Type</span>
+                <select name="account_type">
+                    <option value="">-- None --</option>
+                    {% for account_type in account_types %}
+                    <option value="{{ account_type }}" {% if account.account_type == account_type %}selected{% endif %}>{{ account_type }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" name="include_in_portfolio" value="true" {% if account.include_in_portfolio %}checked{% endif %}>
+                <span>Include in Portfolio</span>
+            </label>
+            <button class="button" type="submit">Save Settings</button>
+        </form>
+    </details>
+
+    <div class="account-actions-row">
+        <a class="button button-light" href="/holdings/history?account_key={{ account.brokerage_name|urlencode }}%7C{{ account.account_number|urlencode }}%7C{{ account.name|urlencode }}">View Holdings History</a>
+        <a class="button button-light" href="/accounts/history?account_keys={{ account.brokerage_name|urlencode }}%7C{{ account.account_number|urlencode }}%7C{{ account.name|urlencode }}">View Account History</a>
+    </div>
+</section>
+{% endfor %}
+</div>
+{% else %}
+<div class="data-card"><p class="empty-state">No investment accounts were found.</p></div>
+{% endif %}
+{% endblock %}

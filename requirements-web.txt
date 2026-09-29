@@ -1,5 +1,4 @@
 # Sprint 4 web/API dependencies
-
 fastapi>=0.141.1,<1.0
 starlette>=1.7.0,<2.0
 anyio>=4.15.0,<5.0

@@ -1,8 +1,102 @@
+# CURRENT HANDOFF — September 29, 2026
+
+> **This section is the current source-of-truth status for the project.** Older sections in this document preserve historical design information. If an older statement conflicts with this section, inspect the current code/tests before changing anything.
+
+## Current development status
+
+The Financial Model is a working Windows desktop application with a new FastAPI/Jinja2 web implementation developed through Sprint 4. The Windows Tkinter application remains intact.
+
+**Latest full test result reported by the user: 137 tests passed.** Treat 137 passed as the current project baseline unless a later test run changes it. Do not claim a different result without actually running the tests.
+
+### Sprint 4 status
+
+| Stage | Status | Notes |
+|---|---|---|
+| 4.1 API Foundation | COMPLETE | FastAPI + `/api/health` |
+| 4.2 Read-only Financial API | COMPLETE | Service-backed API endpoints |
+| 4.3 Web Application Shell | COMPLETE | Responsive Jinja2 web shell |
+| 4.4 Web Portfolio | COMPLETE | Portfolio dashboard and refresh |
+| 4.5 Web History | COMPLETE | Portfolio/Account/Holdings History views |
+| 4.6 Web Account Management | COMPLETE | Rename, type, Include/Exclude, account display |
+| 4.7 Web Import | COMPLETE | BMO/Nesbitt Excel upload through existing importer services |
+| 4.8 Raspberry Pi Deployment | PREPARED | Deployment artifacts created; actual Pi deployment not yet performed |
+| 4.9A Windows/WireGuard Validation | COMPLETE | Windows-side validation/configuration only |
+| 4.9B Raspberry Pi + WireGuard | NEXT | Wait until Pi environment is available |
+
+## Current Sprint 4 artifacts
+
+### Sprint 4.8
+
+Deployment ZIP:
+
+```text
+Sprint_4.8_Raspberry_Pi_Deployment.zip
+```
+
+Contains only the deployment files added for 4.8:
+
+```text
+deploy/README.md
+deploy/financial-model.service.template
+deploy/install_pi.sh
+tests/test_pi_deployment.py
+```
+
+The deployment script:
+
+- installs Python/venv dependencies on Raspberry Pi OS,
+- expects the tested project and existing SQLite database to already be copied to the Pi,
+- creates/uses a Python virtual environment,
+- installs `requirements.txt` and `requirements-web.txt`,
+- creates the `financial-model.service` systemd service,
+- starts FastAPI with Uvicorn on port 8000,
+- checks `/api/health` when `curl` is available,
+- does **not** run Alembic migrations.
+
+### Sprint 4.9A
+
+Validation ZIP:
+
+```text
+Sprint_4.9A_Windows_WireGuard_Validation.zip
+```
+
+This was deliberately developed without requiring the Pi. It contains Windows-side validation/configuration material and tests. It does **not** prove an actual WireGuard tunnel to the Pi.
+
+## Planned Pi storage
+
+The user has decided to use NVMe storage rather than relying on microSD for the long-term Pi installation.
+
+Planned hardware:
+
+```text
+Raspberry Pi 5
+    |
+    +-- Official Raspberry Pi M.2 HAT+
+            |
+            +-- 2242 NVMe SSD
+```
+
+The selected HAT is the genuine Raspberry Pi M.2 HAT+ from CanaKit. The user plans to purchase it with a suitable 2242 NVMe SSD.
+
+When the Pi is deployed, the intended arrangement is to put the Pi OS/application/database on the NVMe rather than moving only the SQLite database to USB.
+
+## Next development/deployment step
+
+Do **not** invent another application sprint yet. The existing Sprint 4 plan ends with remote/WAN access through WireGuard. The next practical step is:
+
+**Sprint 4.9B — actual Raspberry Pi deployment and WireGuard end-to-end testing.**
+
+This requires the Pi environment.
+
+When the Pi is available, follow the deployment sequence documented in the Sprint 4 handoff document in `Sprint 4 - web based` and in `deploy/README.md` from the 4.8 ZIP.
+
+
 # Davison Financial Model
 
 ## Project Overview and Development Handoff
 
-**Reviewed:** September 20, 2026  
+**Reviewed:** September 29, 2026  
 **Project:** Private personal financial/portfolio management application  
 **Language:** Python 3.13+  
 **GUI:** Tkinter / ttk  
@@ -675,3 +769,26 @@ For future development, use this priority order:
 5. These documentation files
 
 These documents are designed to preserve architectural intent and development history, but they must not override the actual current code.
+
+
+# CURRENT PROJECT HANDOFF — September 29, 2026
+
+The web implementation is complete through 4.9A. The current full Windows test result reported by the user is **137 passed**.
+
+Current next step is **Sprint 4.9B — Raspberry Pi deployment and actual WireGuard end-to-end testing**. The Pi is not yet deployed.
+
+Prepared deployment artifact:
+
+```text
+Sprint_4.8_Raspberry_Pi_Deployment.zip
+```
+
+Prepared Windows/WireGuard validation artifact:
+
+```text
+Sprint_4.9A_Windows_WireGuard_Validation.zip
+```
+
+The planned Pi storage is an official Raspberry Pi M.2 HAT+ with a 2242 NVMe SSD. The long-term architecture is Pi-local SQLite behind FastAPI, with browser clients reaching the Pi through LAN/WireGuard.
+
+When returning to the project, inspect the actual source tree and latest ZIP before making changes. Then follow the 4.9B deployment sequence in `Sprint 4 - web based` and `deploy/README.md`.

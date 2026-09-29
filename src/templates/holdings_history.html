@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Holdings History — Financial Model{% endblock %}
+{% block content %}
+<section class="page-heading">
+    <h1>Holdings History</h1>
+    <p>Compare the selected account's holdings between two dates.</p>
+</section>
+
+<form class="card history-controls" method="get">
+    <div class="control-grid holdings-controls">
+        <label>
+            <span>Account</span>
+            <select name="account_key">
+                {% for account in accounts %}
+                <option value="{{ account.key }}" {% if account.key == selected_key %}selected{% endif %}>{{ account.label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            <span>From</span>
+            <input type="date" name="from_date" value="{{ from_date }}">
+        </label>
+        <label>
+            <span>To</span>
+            <input type="date" name="to_date" value="{{ to_date }}">
+        </label>
+        <div class="control-action">
+            <button class="button" type="submit">Refresh</button>
+        </div>
+    </div>
+</form>
+
+{% if comparison %}
+<section class="portfolio-summary-grid comparison-summary">
+    <article class="card metric-card">
+        <span class="metric-label">From Value</span>
+        <strong>{% if comparison.first_value is not none %}${{ "{:,.2f}".format(comparison.first_value) }}{% else %}--{% endif %}</strong>
+    </article>
+    <article class="card metric-card">
+        <span class="metric-label">To Value</span>
+        <strong>{% if comparison.second_value is not none %}${{ "{:,.2f}".format(comparison.second_value) }}{% else %}--{% endif %}</strong>
+    </article>
+    <article class="card metric-card">
+        <span class="metric-label">Value Change</span>
+        <strong class="{% if comparison.value_difference is not none and comparison.value_difference > 0 %}positive{% elif comparison.value_difference is not none and comparison.value_difference < 0 %}negative{% endif %}">{% if comparison.value_difference is not none %}${{ "{:+,.2f}".format(comparison.value_difference) }}{% else %}--{% endif %}</strong>
+    </article>
+    <article class="card metric-card">
+        <span class="metric-label">Positions Compared</span>
+        <strong>{{ comparison.positions|length }}</strong>
+    </article>
+</section>
+
+<section class="card data-card">
+    <div class="section-heading"><h2>Position Changes</h2></div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Symbol</th><th>Company</th>
+                    <th class="numeric">Qty From</th><th class="numeric">Qty To</th><th class="numeric">Qty Change</th>
+                    <th class="numeric">Avg Cost From</th><th class="numeric">Avg Cost To</th>
+                    <th class="numeric">Market Value From</th><th class="numeric">Market Value To</th>
+                    <th class="numeric">Unrealized Gain From</th><th class="numeric">Unrealized Gain To</th><th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for position in comparison.positions %}
+            <tr>
+                <td><strong>{{ position.symbol }}</strong></td>
+                <td>{{ position.company_name }}</td>
+                <td class="numeric">{{ position.first_quantity }}</td>
+                <td class="numeric">{{ position.second_quantity }}</td>
+                <td class="numeric {% if position.quantity_difference > 0 %}positive{% elif position.quantity_difference < 0 %}negative{% endif %}">{{ "{:+,.4f}".format(position.quantity_difference) }}</td>
+                <td class="numeric">{% if position.first_average_cost is not none %}${{ "{:,.2f}".format(position.first_average_cost) }}{% else %}--{% endif %}</td>
+                <td class="numeric">{% if position.second_average_cost is not none %}${{ "{:,.2f}".format(position.second_average_cost) }}{% else %}--{% endif %}</td>
+                <td class="numeric">{% if position.first_market_value is not none %}${{ "{:,.2f}".format(position.first_market_value) }}{% else %}--{% endif %}</td>
+                <td class="numeric">{% if position.second_market_value is not none %}${{ "{:,.2f}".format(position.second_market_value) }}{% else %}--{% endif %}</td>
+                <td class="numeric">{% if position.first_unrealized_gain is not none %}${{ "{:+,.2f}".format(position.first_unrealized_gain) }}{% else %}--{% endif %}</td>
+                <td class="numeric">{% if position.second_unrealized_gain is not none %}${{ "{:+,.2f}".format(position.second_unrealized_gain) }}{% else %}--{% endif %}</td>
+                <td>{{ position.status }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="12">No position changes were found.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% else %}
+<section class="card shell-card"><div class="card-icon" aria-hidden="true">▥</div><div><h2>No comparison available</h2><p>Select an account and a valid date range.</p></div></section>
+{% endif %}
+{% endblock %}

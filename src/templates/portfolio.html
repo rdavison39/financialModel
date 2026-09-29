@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Portfolio — Financial Model{% endblock %}
+{% block content %}
+<section class="page-heading portfolio-heading">
+    <div>
+        <h1>Portfolio</h1>
+        <p>Current portfolio values and daily performance.</p>
+    </div>
+    <a class="button" href="/portfolio">Refresh</a>
+</section>
+
+<section class="portfolio-summary-grid" aria-label="Portfolio summary">
+    <article class="card metric-card">
+        <span class="metric-label">Total Portfolio</span>
+        <strong>{{ "${:,.2f}".format(total_value) }}</strong>
+    </article>
+    <article class="card metric-card">
+        <span class="metric-label">Today's Gain/Loss</span>
+        <strong class="{% if daily_change > 0 %}positive{% elif daily_change < 0 %}negative{% endif %}">
+            {{ "{:+,.2f}".format(daily_change) }}
+            {% if daily_percent is not none %}({{ "{:+.2f}%".format(daily_percent) }}){% endif %}
+        </strong>
+    </article>
+    <article class="card metric-card">
+        <span class="metric-label">TSX Composite</span>
+        <strong class="{% if tsx is not none and tsx > 0 %}positive{% elif tsx is not none and tsx < 0 %}negative{% endif %}">
+            {% if tsx is not none %}{{ "{:+.2f}%".format(tsx) }}{% else %}--{% endif %}
+        </strong>
+    </article>
+    <article class="card metric-card">
+        <span class="metric-label">Last Updated</span>
+        <strong class="metric-small">
+            {% if updated_at %}{{ updated_at.strftime('%Y-%m-%d %I:%M:%S %p') }}{% else %}--{% endif %}
+        </strong>
+    </article>
+</section>
+
+<section class="card data-card">
+    <div class="section-heading"><h2>Brokerage Summary</h2></div>
+    {% if brokerages %}
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Brokerage</th><th class="numeric">Portfolio Value</th><th class="numeric">Today's Gain/Loss</th></tr></thead>
+            <tbody>
+            {% for brokerage in brokerages %}
+            <tr>
+                <td>{{ brokerage.name }}</td>
+                <td class="numeric">${{ "{:,.2f}".format(brokerage.value) }}</td>
+                <td class="numeric {% if brokerage.daily_change > 0 %}positive{% elif brokerage.daily_change < 0 %}negative{% endif %}">
+                    {{ "{:+,.2f}".format(brokerage.daily_change) }}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}<p class="empty-state">No included accounts have saved valuations.</p>{% endif %}
+</section>
+
+<section class="card data-card">
+    <div class="section-heading"><h2>Accounts</h2></div>
+    {% if accounts %}
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Account</th><th>Type</th><th class="numeric">Portfolio Value</th><th class="numeric">Today's Gain/Loss</th><th class="numeric">Holdings</th></tr></thead>
+            <tbody>
+            {% for row in accounts %}
+            {% set account = row.summary %}
+            <tr>
+                <td><strong>{{ account.name }}</strong><br><span class="muted">{{ account.brokerage_name }} · {{ account.account_number }}</span></td>
+                <td>{{ account.account_type or "--" }}</td>
+                <td class="numeric">{% if account.current_value is not none %}${{ "{:,.2f}".format(account.current_value) }}{% else %}--{% endif %}</td>
+                <td class="numeric {% if row.daily_change is not none and row.daily_change > 0 %}positive{% elif row.daily_change is not none and row.daily_change < 0 %}negative{% endif %}">{% if row.daily_change is not none %}{{ "{:+,.2f}".format(row.daily_change) }}{% else %}--{% endif %}</td>
+                <td class="numeric">{{ account.holdings_count }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}<p class="empty-state">No accounts are included in the portfolio.</p>{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Financial Model{% endblock %}
+{% block content %}
+<section class="page-heading">
+    <h1>{{ title }}</h1>
+    <p>{{ description }}</p>
+</section>
+
+<form class="card history-controls" method="get">
+    <div class="control-grid">
+        <label>
+            <span>View</span>
+            <select name="view" id="view-select" onchange="this.form.submit()">
+                {% for option in views %}
+                <option value="{{ option }}" {% if view == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            <span>From</span>
+            <input type="date" name="start_date" value="{{ start_date }}">
+        </label>
+        <label>
+            <span>To</span>
+            <input type="date" name="end_date" value="{{ end_date }}">
+        </label>
+        <label>
+            <span>Benchmark</span>
+            <select name="benchmark" id="benchmark-select" {% if not percent_view %}disabled{% endif %}>
+                {% for option in benchmarks %}
+                <option value="{{ option }}" {% if benchmark == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label id="custom-benchmark-wrap" {% if benchmark != 'Custom' or not percent_view %}class="hidden"{% endif %}>
+            <span>Symbol</span>
+            <input type="text" name="custom_benchmark" value="{{ custom_benchmark }}" placeholder="e.g. ^GSPTSE">
+        </label>
+        <div class="control-action">
+            <button class="button" type="submit">Refresh</button>
+        </div>
+    </div>
+
+    <fieldset class="account-selector">
+        <legend>Accounts</legend>
+        <div class="account-actions">
+            <button type="button" class="button button-light" onclick="setAllAccounts(true)">All</button>
+            <button type="button" class="button button-light" onclick="setAllAccounts(false)">None</button>
+            <span class="muted">Selection is preserved by Brokerage|AccountNumber|AccountName.</span>
+        </div>
+        <div class="account-checks">
+            {% for account in accounts %}
+            <label class="account-check">
+                <input type="checkbox" name="account_keys" value="{{ account.key }}" {% if account.key in selected_keys %}checked{% endif %}>
+                <span>{{ account.label }}</span>
+            </label>
+            {% else %}
+            <span class="muted">No accounts found.</span>
+            {% endfor %}
+        </div>
+    </fieldset>
+</form>
+
+<section class="card chart-card">
+    <div class="section-heading">
+        <h2>{{ view }}</h2>
+        {% if percent_view %}<span class="muted">Benchmark: {{ benchmark }}</span>{% endif %}
+    </div>
+    <div class="chart-wrap">
+        <svg id="history-chart" viewBox="0 0 1000 420" role="img" aria-label="{{ title }} chart"></svg>
+    </div>
+    <p id="chart-message" class="empty-state"></p>
+</section>
+
+<section class="card data-card">
+    <div class="section-heading"><h2>History</h2></div>
+    {% if table_rows %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+            <tr>
+                {% if title == 'Account History' %}<th>Account</th>{% endif %}
+                <th>Date</th>
+                <th class="numeric">{{ view }}</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for row in table_rows %}
+            <tr>
+                {% if title == 'Account History' %}<td>{{ row.label }}</td>{% endif %}
+                <td>{{ row.date }}</td>
+                <td class="numeric {% if row.value > 0 %}positive{% elif row.value < 0 %}negative{% endif %}">
+                    {% if row.value is not none %}
+                        {% if percent_view %}{{ "{:+.2f}%".format(row.value) }}
+                        {% elif view == "Day's Gain/Loss" %}{{ "${:+,.2f}".format(row.value) }}
+                        {% else %}${{ "{:,.2f}".format(row.value) }}{% endif %}
+                    {% else %}--{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No history is available for the selected accounts and dates.</p>
+    {% endif %}
+</section>
+
+<script>
+const chartSeries = {{ chart_series | tojson }};
+const percentView = {{ 'true' if percent_view else 'false' }};
+
+function setAllAccounts(checked) {
+    document.querySelectorAll('input[name="account_keys"]').forEach((box) => box.checked = checked);
+}
+
+function drawHistoryChart() {
+    const svg = document.getElementById('history-chart');
+    const message = document.getElementById('chart-message');
+    svg.replaceChildren();
+
+    const allPoints = chartSeries.flatMap(series =>
+        series.points.filter(point => point.value !== null).map(point => ({
+            date: new Date(point.date + 'T00:00:00'),
+            value: Number(point.value),
+        }))
+    );
+
+    if (!allPoints.length) {
+        message.textContent = 'No chart data is available for this selection.';
+        return;
+    }
+    message.textContent = '';
+
+    const width = 1000;
+    const height = 420;
+    const left = 72;
+    const right = 24;
+    const top = 24;
+    const bottom = 48;
+    const plotWidth = width - left - right;
+    const plotHeight = height - top - bottom;
+    const minDate = Math.min(...allPoints.map(p => p.date.getTime()));
+    const maxDate = Math.max(...allPoints.map(p => p.date.getTime()));
+    let minValue = Math.min(...allPoints.map(p => p.value));
+    let maxValue = Math.max(...allPoints.map(p => p.value));
+
+    if (percentView) {
+        minValue = Math.min(minValue, 0);
+        maxValue = Math.max(maxValue, 0);
+    }
+    if (minValue === maxValue) {
+        const padding = Math.abs(minValue || 1) * 0.05;
+        minValue -= padding;
+        maxValue += padding;
+    }
+
+    const x = date => maxDate === minDate
+        ? left + plotWidth / 2
+        : left + ((date.getTime() - minDate) / (maxDate - minDate)) * plotWidth;
+    const y = value => top + (1 - ((value - minValue) / (maxValue - minValue))) * plotHeight;
+
+    const line = (x1, y1, x2, y2, attrs = {}) => {
+        const el = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        el.setAttribute('x1', x1); el.setAttribute('y1', y1);
+        el.setAttribute('x2', x2); el.setAttribute('y2', y2);
+        Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
+        svg.appendChild(el);
+    };
+    const text = (xPos, yPos, value, attrs = {}) => {
+        const el = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        el.setAttribute('x', xPos); el.setAttribute('y', yPos);
+        Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
+        el.textContent = value;
+        svg.appendChild(el);
+    };
+
+    line(left, top, left, height - bottom, {'stroke': '#94a3b8'});
+    line(left, height - bottom, width - right, height - bottom, {'stroke': '#94a3b8'});
+    if (percentView) {
+        line(left, y(0), width - right, y(0), {'stroke': '#15803d', 'stroke-width': '2'});
+    }
+
+    const range = maxValue - minValue;
+    for (let i = 0; i <= 4; i++) {
+        const value = minValue + range * (i / 4);
+        const yy = y(value);
+        line(left, yy, width - right, yy, {'stroke': '#e5e7eb'});
+        text(left - 8, yy + 4, percentView ? value.toFixed(1) + '%' : '$' + value.toLocaleString(undefined, {maximumFractionDigits: 0}), {'text-anchor': 'end', 'fill': '#667085', 'font-size': '12'});
+    }
+
+    chartSeries.forEach((series, seriesIndex) => {
+        const points = series.points.filter(point => point.value !== null).map(point => {
+            const d = new Date(point.date + 'T00:00:00');
+            return `${x(d)},${y(Number(point.value))}`;
+        });
+        if (points.length < 2) return;
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        path.setAttribute('points', points.join(' '));
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', series.benchmark ? '#7c3aed' : `hsl(${(seriesIndex * 67) % 360} 65% 45%)`);
+        path.setAttribute('stroke-width', series.benchmark ? '2' : '3');
+        path.setAttribute('stroke-dasharray', series.benchmark ? '7 5' : '');
+        svg.appendChild(path);
+    });
+
+    chartSeries.forEach((series, index) => {
+        text(left + index * 190, 18, series.label, {'fill': series.benchmark ? '#7c3aed' : '#344054', 'font-size': '13', 'font-weight': '600'});
+    });
+}
+
+drawHistoryChart();
+window.addEventListener('resize', drawHistoryChart);
+
+document.getElementById('benchmark-select').addEventListener('change', function () {
+    document.getElementById('custom-benchmark-wrap').classList.toggle('hidden', this.value !== 'Custom');
+});
+</script>
+{% endblock %}

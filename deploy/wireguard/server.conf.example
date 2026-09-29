@@ -1,0 +1,16 @@
+# Future Raspberry Pi WireGuard server example.
+# Replace every placeholder before use.
+#
+# This is a template only. Do not commit real private keys.
+
+[Interface]
+Address = 10.6.0.1/24
+ListenPort = 51820
+PrivateKey = <SERVER_PRIVATE_KEY>
+
+# Add one [Peer] section per remote device.
+
+[Peer]
+# Example remote iPhone/laptop
+PublicKey = <CLIENT_PUBLIC_KEY>
+AllowedIPs = 10.6.0.2/32

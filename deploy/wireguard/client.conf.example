@@ -1,0 +1,19 @@
+# Future remote-device WireGuard client example.
+# Replace every placeholder before use.
+#
+# This is a template only. Do not commit real private keys.
+
+[Interface]
+Address = 10.6.0.2/32
+PrivateKey = <CLIENT_PRIVATE_KEY>
+
+[Peer]
+PublicKey = <SERVER_PUBLIC_KEY>
+Endpoint = <HOME_PUBLIC_IP_OR_DDNS>:51820
+
+# Route only the WireGuard network to the VPN initially.
+# Add the home LAN subnet later if access to other LAN devices is required.
+AllowedIPs = 10.6.0.0/24
+
+# Helpful for clients behind NAT/firewalls.
+PersistentKeepalive = 25

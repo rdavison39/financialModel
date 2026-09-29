@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <div>
+    <h1>{{ title }}</h1>
+    <p>{{ description }}</p>
+  </div>
+</section>
+
+<section class="data-card import-card">
+  <form method="post" action="/import" enctype="multipart/form-data" class="import-form">
+    <label>
+      <span>Brokerage</span>
+      <select name="brokerage" required>
+        <option value="BMO">BMO</option>
+        <option value="Nesbitt Burns">Nesbitt Burns</option>
+      </select>
+    </label>
+
+    <label>
+      <span>Excel file</span>
+      <input type="file" name="upload" accept=".xlsx,.xlsm" required>
+    </label>
+
+    <button class="button" type="submit">Import File</button>
+  </form>
+</section>
+
+{% if error %}
+<section class="data-card import-result import-error">
+  <h2>Import failed</h2>
+  <p>{{ error }}</p>
+</section>
+{% endif %}
+
+{% if result %}
+<section class="data-card import-result import-success">
+  <h2>Import complete</h2>
+  {% if result.duplicate %}
+    <p>This snapshot was already imported. No new records were created.</p>
+  {% else %}
+    <p>The workbook was imported successfully.</p>
+  {% endif %}
+  <dl class="import-summary">
+    <div><dt>Account</dt><dd>{{ result.account_number }}</dd></div>
+    <div><dt>Snapshot Date</dt><dd>{{ result.snapshot_date }}</dd></div>
+    <div><dt>Holdings</dt><dd>{{ result.holdings_imported }}</dd></div>
+    <div><dt>Cash Balances</dt><dd>{{ result.cash_imported }}</dd></div>
+    <div><dt>Duplicate</dt><dd>{{ "Yes" if result.duplicate else "No" }}</dd></div>
+  </dl>
+</section>
+{% endif %}
+{% endblock %}
