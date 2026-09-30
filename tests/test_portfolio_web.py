@@ -138,7 +138,29 @@ def test_portfolio_page_has_visible_progress_indicator_and_horizontal_actions():
     assert 'id="update-progress"' in response.text
     assert 'class="progress-track"' in response.text
     assert 'event.preventDefault()' in response.text
+    assert '/portfolio/update?async_update=true' in response.text
+    assert '/portfolio/update-status' in response.text
     assert 'class="portfolio-actions"' in response.text
-    assert 'class="portfolio-heading-row"' in response.text
-    assert 'const response = await fetch(form.action' in response.text
-    assert 'document.write(html)' in response.text
+
+
+def test_portfolio_update_status_reports_symbol_and_percent(monkeypatch):
+    monkeypatch.setattr(
+        "src.api.main._get_portfolio_update_state",
+        lambda: {
+            "running": True,
+            "count": 7,
+            "total": 20,
+            "symbol": "AAPL",
+            "percent": 35,
+            "message": "Updating Portfolio: 35% — 7 / 20 — AAPL",
+            "error": False,
+        },
+    )
+
+    response = client.get("/portfolio/update-status")
+
+    assert response.status_code == 200
+    assert response.json()["symbol"] == "AAPL"
+    assert response.json()["percent"] == 35
+    assert response.json()["count"] == 7
+    assert response.json()["total"] == 20

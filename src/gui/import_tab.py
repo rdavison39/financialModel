@@ -15,8 +15,9 @@ from src.services.ui_settings_service import UISettingsService
 class ImportTab(ttk.Frame):
     """GUI for importing BMO and Nesbitt Burns Excel files."""
 
-    def __init__(self, parent: tk.Misc) -> None:
+    def __init__(self, parent: tk.Misc, on_import_complete=None) -> None:
         super().__init__(parent)
+        self._on_import_complete = on_import_complete
 
         self.columnconfigure(1, weight=1)
         self.rowconfigure(8, weight=1)
@@ -367,6 +368,8 @@ class ImportTab(ttk.Frame):
                 directory=directory_path,
                 result=result,
             )
+            if result.snapshots and self._on_import_complete is not None:
+                self.after(250, self._on_import_complete)
 
         except Exception as exc:
             messagebox.showerror(

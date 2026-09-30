@@ -5,11 +5,12 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
+import threading
 import tempfile
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
@@ -24,8 +25,10 @@ from src.api.schemas import (
     PortfolioResponse,
 )
 from src.database import get_session
+from src.database_init import initialize_database
 from src.models.account import Account
 from src.models.portfolio_snapshot import PortfolioSnapshot
+from src.models.brokerage import Brokerage
 from src.importers.bmo_importer import BMOImporter
 from src.importers.nesbitt_importer import NesbittImporter
 from src.services.account_comparison_history_service import (
@@ -36,6 +39,78 @@ from src.services.import_service import ImportService
 from src.services.portfolio_comparison_service import PortfolioComparisonService
 from src.services.portfolio_history_service import PortfolioHistoryService
 from src.services.portfolio_service import PortfolioService
+from src.services.snapshot_management_service import SnapshotManagementService
+
+
+# Portfolio web update progress is kept in-process because the web application
+# runs as a single application process on the local/Raspberry Pi deployment.
+_portfolio_update_lock = threading.Lock()
+_portfolio_update_state = {
+    "running": False,
+    "count": 0,
+    "total": 0,
+    "symbol": "",
+    "percent": 0,
+    "message": "",
+    "error": False,
+}
+
+
+def _set_portfolio_update_state(**values) -> None:
+    """Update the thread-safe web portfolio progress state."""
+    with _portfolio_update_lock:
+        _portfolio_update_state.update(values)
+
+
+def _get_portfolio_update_state() -> dict:
+    """Return a snapshot of the current web portfolio progress state."""
+    with _portfolio_update_lock:
+        return dict(_portfolio_update_state)
+
+
+def _run_portfolio_update_background() -> None:
+    """Run portfolio valuation in the background and publish progress."""
+    session = None
+
+    def progress_callback(count: int, total: int, symbol: str) -> None:
+        percent = 0 if total <= 0 else min(100, int(count * 100 / total))
+        _set_portfolio_update_state(
+            count=count,
+            total=total,
+            symbol=symbol,
+            percent=percent,
+            message=f"Updating Portfolio: {percent}% — {count} / {total} — {symbol}",
+            error=False,
+        )
+
+    try:
+        initialize_database()
+        session = get_session()
+        from src.services.portfolio_valuation_service import PortfolioValuationService
+
+        service = PortfolioValuationService(
+            session,
+            progress_callback=progress_callback,
+        )
+        total_value = service.update_all_accounts()
+        _set_portfolio_update_state(
+            running=False,
+            count=_get_portfolio_update_state()["total"],
+            percent=100,
+            symbol="",
+            message=f"Portfolio updated: ${total_value:,.2f}",
+            error=False,
+        )
+    except Exception as exc:
+        _set_portfolio_update_state(
+            running=False,
+            message=f"Portfolio update failed: {type(exc).__name__}: {exc}",
+            error=True,
+        )
+    finally:
+        if session is not None:
+            session.close()
+
 
 app = FastAPI(
     title="Davison Financial Model API",
@@ -49,6 +124,7 @@ templates = Jinja2Templates(directory=SRC_DIR / "templates")
 NAVIGATION = [
     {"label": "Portfolio", "path": "/portfolio"},
     {"label": "Portfolio History", "path": "/portfolio/history"},
+    {"label": "Manage Snapshots", "path": "/snapshots"},
     {"label": "Account Management", "path": "/accounts"},
     {"label": "Account History", "path": "/accounts/history"},
     {"label": "Holdings History", "path": "/holdings/history"},
@@ -198,72 +274,57 @@ def _benchmark_series(
     benchmark_name: str,
     custom_symbol: str,
     view: str,
-    start_date: date,
-    end_date: date,
+    history,
     plot_dates: set[date] | None = None,
 ) -> list[dict[str, object]]:
-    """Build the selected benchmark series for percentage views.
-
-    When plot_dates is supplied, only those dates are returned. This keeps
-    the benchmark visually aligned with the portfolio valuation dates
-    rather than plotting every market-trading day in the selected range.
-    """
+    """Build the selected benchmark series using shared service calculations."""
     symbol = _benchmark_symbol(benchmark_name, custom_symbol)
-    if not symbol or not _is_percent_view(view):
+    if not symbol or not _is_percent_view(view) or not history:
         return []
 
-    query_start = start_date
-    if view == "% Day's Gain/Loss":
-        query_start = start_date - timedelta(days=14)
+    effective_range = service.calculate_effective_date_range(
+        history[0].snapshot_date,
+        history[-1].snapshot_date,
+        history,
+    )
+    if effective_range is None:
+        return []
+
+    effective_start, effective_end = effective_range
+    daily_change_view = view == "% Day's Gain/Loss"
+    query_start = service.calculate_benchmark_query_start(
+        effective_start,
+        daily_change_view=daily_change_view,
+    )
 
     try:
-        points = service.get_benchmark_history(symbol, query_start, end_date)
+        raw = service.get_benchmark_history(symbol, query_start, effective_end)
     except Exception:
         return []
 
+    benchmark_points, previous_close = service.filter_benchmark_history(
+        raw,
+        effective_start,
+        effective_end,
+    )
+    if not benchmark_points:
+        return []
+
     if view == "% Growth Since Start":
-        # The benchmark must start at the same effective date as the
-        # portfolio graph.  The selected date range can begin much earlier
-        # than the first portfolio valuation (for example, the database may
-        # only contain recent valuations).  Using start_date here would make
-        # TSX show growth over the entire requested year while the portfolio
-        # line starts at its first actual valuation date.
-        baseline_date = min(plot_dates) if plot_dates else start_date
-        points = [point for point in points if point.snapshot_date >= baseline_date]
-        if not points:
-            return []
-        first = points[0].value
-        values = {
-            point.snapshot_date: (
-                Decimal("0")
-                if first == 0
-                else (point.value - first) / first * Decimal("100")
-            )
-            for point in points
-        }
-        dates = (plot_dates & values.keys()) if plot_dates is not None else values.keys()
-        return [
-            {"date": point.isoformat(), "value": str(values[point])}
-            for point in sorted(dates)
-        ]
+        values = service.calculate_benchmark_growth(benchmark_points)
+    else:
+        values = service.calculate_benchmark_daily_change_percent_values(
+            benchmark_points,
+            previous_close=previous_close,
+        )
 
-    prior = None
-    values = {}
-    for point in points:
-        if point.snapshot_date < start_date:
-            prior = point.value
-            continue
-        if prior is None or prior == 0:
-            value = None
-        else:
-            value = (point.value - prior) / prior * Decimal("100")
-        prior = point.value
-        if value is not None:
-            values[point.snapshot_date] = value
-
-    dates = (plot_dates & values.keys()) if plot_dates is not None else values.keys()
+    value_by_date = {
+        point.snapshot_date: value
+        for point, value in zip(benchmark_points, values)
+    }
+    dates = (plot_dates & value_by_date.keys()) if plot_dates is not None else value_by_date.keys()
     return [
-        {"date": point.isoformat(), "value": str(values[point])}
+        {"date": point.isoformat(), "value": str(value_by_date[point])}
         for point in sorted(dates)
     ]
 
@@ -273,48 +334,19 @@ def _portfolio_history_series(
     view: str,
     trading_dates: set[date],
 ) -> list[dict[str, object]]:
-    """Transform portfolio history points into a chart series."""
-    if view == "Portfolio Value":
-        selected = points
-        return [
-            {"date": point.snapshot_date.isoformat(), "value": str(point.total_value)}
-            for point in selected
-        ]
-
-    selected = [point for point in points if point.snapshot_date in trading_dates]
-    if view == "% Growth Since Start":
-        if not selected:
-            return []
-        first = selected[0].total_value
-        return [
-            {
-                "date": point.snapshot_date.isoformat(),
-                "value": str(
-                    Decimal("0")
-                    if first == 0
-                    else (point.total_value - first) / first * Decimal("100")
-                ),
-            }
-            for point in selected
-        ]
-
+    """Transform portfolio history using the shared service calculation API."""
+    selected = (
+        points
+        if view == "Portfolio Value"
+        else [point for point in points if point.snapshot_date in trading_dates]
+    )
+    values = PortfolioHistoryService.calculate_metric_values(selected, view)
     return [
         {
             "date": point.snapshot_date.isoformat(),
-            "value": str(
-                point.daily_change
-                if view == "Day's Gain/Loss"
-                else point.daily_change_percent
-            )
-            if (
-                point.daily_change
-                if view == "Day's Gain/Loss"
-                else point.daily_change_percent
-            )
-            is not None
-            else None,
+            "value": None if value is None else str(value),
         }
-        for point in selected
+        for point, value in zip(selected, values)
     ]
 
 
@@ -324,36 +356,23 @@ def _account_history_series(
     view: str,
     trading_dates: set[date],
 ) -> list[dict[str, object]]:
-    """Transform selected account histories into chart series."""
+    """Transform selected account histories using shared service calculations."""
     result = []
     for account_id, points in history.items():
-        if view == "Portfolio Value":
-            selected = points
-        else:
-            selected = [point for point in points if point.snapshot_date in trading_dates]
-
-        if view == "% Growth Since Start":
-            if not selected:
-                continue
-            first = selected[0].total_value
-            values = [
-                Decimal("0")
-                if first == 0
-                else (point.total_value - first) / first * Decimal("100")
-                for point in selected
-            ]
-        elif view == "Day's Gain/Loss":
-            values = [point.daily_change for point in selected]
-        elif view == "% Day's Gain/Loss":
-            values = [point.daily_change_percent for point in selected]
-        else:
-            values = [point.total_value for point in selected]
-
+        selected = (
+            points
+            if view == "Portfolio Value"
+            else [point for point in points if point.snapshot_date in trading_dates]
+        )
+        values = PortfolioHistoryService.calculate_metric_values(selected, view)
         result.append(
             {
                 "label": account_labels[account_id],
                 "points": [
-                    {"date": point.snapshot_date.isoformat(), "value": str(value)}
+                    {
+                        "date": point.snapshot_date.isoformat(),
+                        "value": str(value),
+                    }
                     for point, value in zip(selected, values)
                     if value is not None
                 ],
@@ -370,43 +389,35 @@ def _brokerage_history_series(
     brokerage_ids: dict[str, list[int]],
     selected_brokerages: list[str],
 ) -> list[dict[str, object]]:
-    """Build optional combined brokerage series for Portfolio History percentage views."""
+    """Build optional combined brokerage series using shared calculations."""
     if view not in {"% Growth Since Start", "% Day's Gain/Loss"}:
         return []
 
     result = []
     for brokerage_name in selected_brokerages:
         account_ids = brokerage_ids.get(brokerage_name, [])
-        if not account_ids:
+        if not account_ids or not points:
             continue
 
         brokerage_points = service.get_aggregated_history(
-            points[0].snapshot_date if points else date.min,
-            points[-1].snapshot_date if points else date.min,
+            points[0].snapshot_date,
+            points[-1].snapshot_date,
             account_ids,
         )
         selected = [
             point for point in brokerage_points
             if point.snapshot_date in trading_dates
         ]
-        if view == "% Growth Since Start":
-            if not selected:
-                continue
-            first = selected[0].total_value
-            values = [
-                Decimal("0")
-                if first == 0
-                else (point.total_value - first) / first * Decimal("100")
-                for point in selected
-            ]
-        else:
-            values = [point.daily_change_percent for point in selected]
+        values = service.calculate_metric_values(selected, view)
 
         result.append(
             {
                 "label": brokerage_name,
                 "points": [
-                    {"date": point.snapshot_date.isoformat(), "value": str(value)}
+                    {
+                        "date": point.snapshot_date.isoformat(),
+                        "value": str(value),
+                    }
                     for point, value in zip(selected, values)
                     if value is not None
                 ],
@@ -459,27 +470,19 @@ def _render_history_page(
         points = history_service.get_aggregated_history(start, end, account_ids)
         series = _portfolio_history_series(points, view, trading_dates)
         chart_series = [{"label": "Portfolio", "points": series}]
+        selected_points = (
+            points
+            if view == "Portfolio Value"
+            else [point for point in points if point.snapshot_date in trading_dates]
+        )
+        metric_values = history_service.calculate_metric_values(
+            selected_points,
+            view,
+        )
         table_rows = [
-            {
-                "date": point.snapshot_date,
-                "value": (
-                    point.total_value
-                    if view == "Portfolio Value"
-                    else point.daily_change
-                    if view == "Day's Gain/Loss"
-                    else point.daily_change_percent
-                    if view == "% Day's Gain/Loss"
-                    else (
-                        Decimal("0")
-                        if point.total_value == 0
-                        else (point.total_value - points[0].total_value)
-                        / points[0].total_value
-                        * Decimal("100")
-                    )
-                ),
-            }
-            for point in points
-            if view == "Portfolio Value" or point.snapshot_date in trading_dates
+            {"date": point.snapshot_date, "value": value}
+            for point, value in zip(selected_points, metric_values)
+            if value is not None
         ]
     else:
         histories = AccountComparisonHistoryService(session).get_histories(
@@ -499,25 +502,16 @@ def _render_history_page(
             trading_dates,
         )
         for account_id, points in histories.items():
-            for point in points:
-                if view != "Portfolio Value" and point.snapshot_date not in trading_dates:
-                    continue
-                if view == "Portfolio Value":
-                    value = point.total_value
-                elif view == "% Growth Since Start":
-                    account_points = [
-                        item for item in points if item.snapshot_date in trading_dates
-                    ]
-                    first = account_points[0].total_value if account_points else None
-                    value = (
-                        None
-                        if first is None or first == 0
-                        else (point.total_value - first) / first * Decimal("100")
-                    )
-                elif view == "Day's Gain/Loss":
-                    value = point.daily_change
-                else:
-                    value = point.daily_change_percent
+            selected_points = (
+                points
+                if view == "Portfolio Value"
+                else [point for point in points if point.snapshot_date in trading_dates]
+            )
+            metric_values = history_service.calculate_metric_values(
+                selected_points,
+                view,
+            )
+            for point, value in zip(selected_points, metric_values):
                 if value is not None:
                     table_rows.append(
                         {
@@ -547,17 +541,29 @@ def _render_history_page(
             )
         )
 
+    benchmark_history_points = []
     plot_dates = None
     if page_type == "portfolio":
-        plot_dates = {point.snapshot_date for point in points}
+        benchmark_history_points = (
+            points
+            if view == "Portfolio Value"
+            else [point for point in points if point.snapshot_date in trading_dates]
+        )
+        plot_dates = {point.snapshot_date for point in benchmark_history_points}
+    elif histories:
+        benchmark_history_points = [
+            point
+            for account_points in histories.values()
+            for point in account_points
+            if view == "Portfolio Value" or point.snapshot_date in trading_dates
+        ]
 
     benchmark_series = _benchmark_series(
         history_service,
         benchmark,
         custom_benchmark,
         view,
-        start,
-        end,
+        benchmark_history_points,
         plot_dates=plot_dates,
     )
     if benchmark_series:
@@ -677,6 +683,104 @@ def _portfolio_page_context(session: Session) -> dict:
     }
 
 
+@app.get("/snapshots", include_in_schema=False)
+def web_manage_snapshots(
+    request: Request,
+    session: Annotated[Session, Depends(get_db)],
+    account_key: str | None = Query(default=None),
+    message: str = Query(default=""),
+    message_class: str = Query(default=""),
+):
+    """Render imported brokerage snapshots and their external cash flows."""
+    service = SnapshotManagementService(session)
+    accounts = service.get_accounts()
+    selected_account_id = None
+    if account_key:
+        for account in accounts:
+            if account.key == account_key:
+                selected_account_id = account.account_id
+                break
+
+    if selected_account_id is None and accounts:
+        selected_account_id = accounts[0].account_id
+        account_key = accounts[0].key
+
+    snapshots = service.get_snapshots(selected_account_id)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="snapshots.html",
+        context={
+            "title": "Manage Snapshots",
+            "description": (
+                "Manage brokerage Excel snapshots. Daily portfolio updates do "
+                "not create snapshots here."
+            ),
+            "navigation": NAVIGATION,
+            "accounts": accounts,
+            "account_key": account_key,
+            "snapshots": snapshots,
+            "message": message,
+            "message_class": message_class,
+        },
+    )
+
+
+@app.post("/snapshots/{snapshot_id}", include_in_schema=False)
+def web_update_snapshot(
+    snapshot_id: int,
+    session: Annotated[Session, Depends(get_db)],
+    external_added: str = Form(default="0"),
+    external_withdrawn: str = Form(default="0"),
+):
+    """Update external cash flow amounts for one imported snapshot."""
+    try:
+        snapshot = SnapshotManagementService(session).update_cash_flow(
+            snapshot_id,
+            external_added,
+            external_withdrawn,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    account = next(
+        account
+        for account in SnapshotManagementService(session).get_accounts()
+        if account.account_id == snapshot.account_id
+    )
+    return RedirectResponse(
+        url=(
+            f"/snapshots?account_key={account.key}"
+            "&message=Snapshot%20updated&message_class=success"
+        ),
+        status_code=303,
+    )
+
+
+@app.post("/import/snapshot/{snapshot_id}/cash-flow", include_in_schema=False)
+def web_update_import_cash_flow(
+    snapshot_id: int,
+    request: Request,
+    session: Annotated[Session, Depends(get_db)],
+    external_added: str = Form(default="0"),
+    external_withdrawn: str = Form(default="0"),
+):
+    """Save cash-flow amounts directly from the completed import screen."""
+    try:
+        snapshot = SnapshotManagementService(session).update_cash_flow(
+            snapshot_id,
+            external_added,
+            external_withdrawn,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return RedirectResponse(
+        url=f"/snapshots?message=Snapshot%20updated&message_class=success",
+        status_code=303,
+    )
+
+
 @app.get("/", include_in_schema=False)
 def web_home() -> RedirectResponse:
     """Open the web application at the Portfolio page."""
@@ -722,8 +826,40 @@ def web_portfolio(
 def web_portfolio_update(
     request: Request,
     session: Annotated[Session, Depends(get_db)],
+    async_update: bool = Query(default=False),
 ):
-    """Update all portfolio account valuations using the existing service."""
+    """Update portfolio values, optionally returning immediately for live progress."""
+    if async_update:
+        with _portfolio_update_lock:
+            if _portfolio_update_state["running"]:
+                return JSONResponse(
+                    {"running": True, **_get_portfolio_update_state()},
+                    status_code=409,
+                )
+
+            _portfolio_update_state.update(
+                {
+                    "running": True,
+                    "count": 0,
+                    "total": 0,
+                    "symbol": "",
+                    "percent": 0,
+                    "message": "Preparing portfolio update...",
+                    "error": False,
+                }
+            )
+
+        thread = threading.Thread(
+            target=_run_portfolio_update_background,
+            name="web-portfolio-update",
+            daemon=True,
+        )
+        thread.start()
+        return JSONResponse(
+            {"running": True, **_get_portfolio_update_state()},
+            status_code=202,
+        )
+
     try:
         from src.services.portfolio_valuation_service import PortfolioValuationService
 
@@ -753,6 +889,12 @@ def web_portfolio_update(
         )
 
 
+@app.get("/portfolio/update-status", include_in_schema=False)
+def web_portfolio_update_status():
+    """Return the current background portfolio update progress."""
+    return JSONResponse(_get_portfolio_update_state())
+
+
 @app.post("/portfolio/update-tsx", include_in_schema=False)
 def web_portfolio_update_tsx(
     request: Request,
@@ -779,6 +921,7 @@ def web_portfolio_update_tsx(
             message=f"TSX update failed: {type(exc).__name__}: {exc}",
             message_class="negative",
         )
+
 
 
 @app.get("/portfolio/history", include_in_schema=False)

@@ -13,6 +13,18 @@ from src.services.import_service import ImportService
 
 
 @dataclass
+class ImportedSnapshotSummary:
+    """Imported snapshot that can be edited after a bulk import."""
+
+    import_record_id: int
+    account_id: int
+    account_number: str
+    snapshot_date: object
+    duplicate: bool
+    replaced: bool
+
+
+@dataclass
 class BulkImportResult:
     """Summary of a directory import."""
 
@@ -22,6 +34,7 @@ class BulkImportResult:
     duplicates: int
     errors: int
     error_files: list[str]
+    snapshots: list[ImportedSnapshotSummary]
 
 
 class BulkImportService:
@@ -90,6 +103,7 @@ class BulkImportService:
         duplicates = 0
         errors = 0
         error_files: list[str] = []
+        snapshots: list[ImportedSnapshotSummary] = []
 
         for file_path in files:
             try:
@@ -111,6 +125,18 @@ class BulkImportService:
                 else:
                     imported += 1
 
+                if result.import_record_id is not None:
+                    snapshots.append(
+                        ImportedSnapshotSummary(
+                            import_record_id=result.import_record_id,
+                            account_id=result.account_id,
+                            account_number=result.account_number,
+                            snapshot_date=result.snapshot_date,
+                            duplicate=result.duplicate,
+                            replaced=result.replaced,
+                        )
+                    )
+
             except Exception as exc:
                 self.session.rollback()
                 errors += 1
@@ -125,4 +151,5 @@ class BulkImportService:
             duplicates=duplicates,
             errors=errors,
             error_files=error_files,
+            snapshots=snapshots,
         )

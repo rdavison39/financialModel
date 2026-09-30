@@ -3,8 +3,9 @@ Import record database model.
 """
 
 from datetime import date, datetime
+from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base
@@ -45,6 +46,21 @@ class ImportRecord(Base):
         nullable=False,
     )
 
+    # External money movements since the previous imported snapshot.
+    # These are intentionally attached to the brokerage import snapshot,
+    # not to daily market-price updates.
+    external_added: Mapped[Decimal] = mapped_column(
+        Numeric(20, 2),
+        nullable=False,
+        default=Decimal("0"),
+    )
+
+    external_withdrawn: Mapped[Decimal] = mapped_column(
+        Numeric(20, 2),
+        nullable=False,
+        default=Decimal("0"),
+    )
+
     def __init__(self, **kwargs) -> None:
         """
         Derive snapshot_day from snapshot_date when callers do not supply it.
@@ -64,6 +80,9 @@ class ImportRecord(Base):
                 raise TypeError(
                     "snapshot_date must be a datetime."
                 )
+
+        kwargs.setdefault("external_added", Decimal("0"))
+        kwargs.setdefault("external_withdrawn", Decimal("0"))
 
         super().__init__(**kwargs)
 

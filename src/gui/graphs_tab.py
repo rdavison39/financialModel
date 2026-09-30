@@ -812,13 +812,11 @@ class GraphsTab(ttk.Frame):
                     )
 
                     if benchmark_start <= benchmark_end:
-                        benchmark_query_start = benchmark_start
-                        if self.view_mode.get() == "% Day's Gain/Loss":
-                            # Fetch enough history to obtain the previous
-                            # trading-day close.  Daily change must compare
-                            # each plotted close with the immediately preceding
-                            # trading close, not with the first plotted point.
-                            benchmark_query_start = benchmark_start - timedelta(days=14)
+                        daily_change_view = self.view_mode.get() == "% Day's Gain/Loss"
+                        benchmark_query_start = service.calculate_benchmark_query_start(
+                            benchmark_start,
+                            daily_change_view=daily_change_view,
+                        )
 
                         raw_benchmark_history = service.get_benchmark_history(
                             benchmark,
@@ -826,22 +824,13 @@ class GraphsTab(ttk.Frame):
                             benchmark_end,
                         )
 
-                        if self.view_mode.get() == "% Day's Gain/Loss":
-                            prior_points = [
-                                point
-                                for point in raw_benchmark_history
-                                if point.snapshot_date < benchmark_start
-                            ]
-                            if prior_points:
-                                self._benchmark_previous_value = prior_points[-1].value
-
-                            benchmark_history = [
-                                point
-                                for point in raw_benchmark_history
-                                if point.snapshot_date >= benchmark_start
-                            ]
-                        else:
-                            benchmark_history = raw_benchmark_history
+                        benchmark_history, self._benchmark_previous_value = (
+                            service.filter_benchmark_history(
+                                raw_benchmark_history,
+                                benchmark_start,
+                                benchmark_end,
+                            )
+                        )
             finally:
                 session.close()
 
@@ -1007,35 +996,10 @@ class GraphsTab(ttk.Frame):
         first = values[0]
         view = self.view_mode.get()
 
-        if view == "Portfolio Value":
-            return values
-
-        if view == "% Growth Since Start":
-            if first == 0:
-                return [Decimal("0") for _ in values]
-            return [
-                (value - first) / first * Decimal("100")
-                for value in values
-            ]
-
-        if view == "Day's Gain/Loss":
-            return [
-                Decimal(str(point.daily_change))
-                if point.daily_change is not None
-                else Decimal("0")
-                for point in history
-            ]
-
-        # Day's % Gain/Loss is the stored market-day return for each
-        # valuation.  It is deliberately not calculated from the previous
-        # graph point because graph points may be sparse and may span cash
-        # flows or missed valuation dates.
-        return [
-            Decimal(str(point.daily_change_percent))
-            if point.daily_change_percent is not None
-            else Decimal("0")
-            for point in history
-        ]
+        return PortfolioHistoryService.calculate_metric_values(
+            history,
+            view,
+        )
 
     # -------------------------------------------------------------
     # Graph
@@ -1297,22 +1261,13 @@ class GraphsTab(ttk.Frame):
         )
 
     def _benchmark_growth_values(self) -> list[Decimal]:
-        """Normalize benchmark values to percentage growth."""
-        benchmark = getattr(self, "_last_benchmark", [])
-        if not benchmark:
-            return []
-
-        first = benchmark[0].value
-        if first == 0:
-            return [Decimal("0") for _ in benchmark]
-
-        return [
-            (point.value - first) / first * Decimal("100")
-            for point in benchmark
-        ]
+        """Normalize benchmark values using the shared service calculation."""
+        return PortfolioHistoryService.calculate_benchmark_growth(
+            getattr(self, "_last_benchmark", [])
+        )
 
     def _benchmark_daily_change_percent_values(self) -> list[Decimal]:
-        """Return each benchmark trading day's change from its prior close."""
+        """Return benchmark daily returns using the shared service calculation."""
         benchmark = sorted(
             (
                 point
@@ -1321,24 +1276,10 @@ class GraphsTab(ttk.Frame):
             ),
             key=lambda point: point.snapshot_date,
         )
-        if not benchmark:
-            return []
-
-        result: list[Decimal] = []
-        previous = getattr(self, "_benchmark_previous_value", None)
-
-        for point in benchmark:
-            if previous is None or previous == 0:
-                result.append(Decimal("0"))
-            else:
-                result.append(
-                    (point.value - previous)
-                    / previous
-                    * Decimal("100")
-                )
-            previous = point.value
-
-        return result
+        return PortfolioHistoryService.calculate_benchmark_daily_change_percent_values(
+            benchmark,
+            previous_close=getattr(self, "_benchmark_previous_value", None),
+        )
 
     def _make_benchmark_points(
         self,

@@ -32,6 +32,8 @@ class ImportResult:
     """Result of importing one brokerage snapshot."""
 
     account_number: str
+    account_id: int
+    import_record_id: int | None
     snapshot_date: datetime
     holdings_imported: int
     cash_imported: int
@@ -84,6 +86,17 @@ class ImportService:
             )
         )
 
+        preserved_added = (
+            Decimal(str(existing_import.external_added or 0))
+            if existing_import is not None
+            else Decimal("0")
+        )
+        preserved_withdrawn = (
+            Decimal(str(existing_import.external_withdrawn or 0))
+            if existing_import is not None
+            else Decimal("0")
+        )
+
         if existing_import is not None:
             # Same or older source report: the existing snapshot remains
             # authoritative unless an explicit force re-import was requested.
@@ -95,6 +108,8 @@ class ImportService:
             ):
                 return ImportResult(
                     account_number=imported_account.account_number,
+                    account_id=account.id,
+                    import_record_id=existing_import.id,
                     snapshot_date=snapshot_timestamp,
                     holdings_imported=0,
                     cash_imported=0,
@@ -123,6 +138,8 @@ class ImportService:
             snapshot_date=snapshot_timestamp,
             snapshot_day=snapshot_day,
             file_name=file_name,
+            external_added=preserved_added,
+            external_withdrawn=preserved_withdrawn,
         )
 
         self.session.add(import_record)
@@ -175,6 +192,8 @@ class ImportService:
 
         return ImportResult(
             account_number=imported_account.account_number,
+            account_id=account.id,
+            import_record_id=import_record.id,
             snapshot_date=snapshot_timestamp,
             holdings_imported=holdings_imported,
             cash_imported=cash_imported,

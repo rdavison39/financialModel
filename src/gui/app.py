@@ -10,6 +10,7 @@ from src.gui.accounts_tab import AccountsTab
 from src.gui.comparison_tab import ComparisonTab
 from src.gui.graphs_tab import GraphsTab
 from src.gui.import_tab import ImportTab
+from src.gui.manage_snapshots_tab import ManageSnapshotsTab
 from src.gui.portfolio_tab import PortfolioTab
 
 
@@ -68,6 +69,7 @@ class FinancialModelApp(tk.Tk):
         for text, command in (
             ("Portfolio", self.show_portfolio),
             ("Portfolio History", self.show_graphs),
+            ("Manage Snapshots", self.show_snapshots),
             ("Account Management", self.show_accounts),
             ("Account History", self.show_account_comparison),
             ("Holdings History", self.show_comparison),
@@ -95,7 +97,11 @@ class FinancialModelApp(tk.Tk):
         self.content.columnconfigure(0, weight=1)
         self.content.rowconfigure(0, weight=1)
 
-        self.import_page = ImportTab(self.content)
+        self.snapshots_page = ManageSnapshotsTab(self.content)
+        self.import_page = ImportTab(
+            self.content,
+            on_import_complete=self.show_snapshots,
+        )
         self.portfolio_page = PortfolioTab(self.content)
         self.accounts_page = AccountsTab(self.content)
         self.graphs_page = GraphsTab(self.content)
@@ -109,6 +115,7 @@ class FinancialModelApp(tk.Tk):
     def _hide_pages(self) -> None:
         """Hide all pages."""
         self.import_page.grid_remove()
+        self.snapshots_page.grid_remove()
         self.portfolio_page.grid_remove()
         self.accounts_page.grid_remove()
         self.graphs_page.grid_remove()
@@ -127,6 +134,11 @@ class FinancialModelApp(tk.Tk):
     def show_import(self) -> None:
         """Show the Import page."""
         self._show_page(self.import_page)
+
+    def show_snapshots(self) -> None:
+        """Show and refresh the imported snapshot management page."""
+        self.snapshots_page.refresh()
+        self._show_page(self.snapshots_page)
 
     def show_portfolio(self) -> None:
         """Show the Portfolio page."""

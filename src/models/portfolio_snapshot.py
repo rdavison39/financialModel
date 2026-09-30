@@ -33,6 +33,18 @@ class PortfolioSnapshot(Base):
         nullable=False,
     )
 
+    external_added: Mapped[Decimal] = mapped_column(
+        Numeric(20, 2),
+        nullable=False,
+        default=Decimal("0"),
+    )
+
+    external_withdrawn: Mapped[Decimal] = mapped_column(
+        Numeric(20, 2),
+        nullable=False,
+        default=Decimal("0"),
+    )
+
     daily_change: Mapped[Decimal | None] = mapped_column(
         Numeric(20, 6),
         nullable=True,

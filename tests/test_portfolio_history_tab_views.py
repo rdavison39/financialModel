@@ -174,3 +174,16 @@ def test_portfolio_history_brokerage_lines_are_percentage_only():
     assert '"BMO": tk.BooleanVar(value=False)' in source
     assert '"NB": tk.BooleanVar(value=False)' in source
     assert 'self._selected_accounts_by_brokerage(' in source
+
+
+def test_desktop_history_uses_shared_service_metric_calculations():
+    source = open("src/gui/graphs_tab.py", encoding="utf-8").read()
+    assert "PortfolioHistoryService.calculate_metric_values(" in source
+
+
+def test_desktop_history_uses_shared_benchmark_calculations():
+    source = open("src/gui/graphs_tab.py", encoding="utf-8").read()
+    assert "PortfolioHistoryService.calculate_benchmark_growth(" in source
+    assert "PortfolioHistoryService.calculate_benchmark_daily_change_percent_values(" in source
+    assert "service.calculate_benchmark_query_start(" in source
+    assert "service.filter_benchmark_history(" in source

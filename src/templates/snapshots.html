@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Manage Snapshots — Financial Model{% endblock %}
+{% block content %}
+<section class="page-heading">
+    <h1>Manage Snapshots</h1>
+    <p>Brokerage Excel imports are the snapshots used for quarterly performance checkpoints. Daily portfolio updates do not create snapshots.</p>
+</section>
+
+{% if message %}
+<div class="card {% if message_class == 'success' %}success-message{% endif %}">
+    {{ message }}
+</div>
+{% endif %}
+
+<form class="card history-controls" method="get">
+    <div class="control-grid">
+        <label>
+            <span>Portfolio / Account</span>
+            <select name="account_key" onchange="this.form.submit()">
+                {% for account in accounts %}
+                <option value="{{ account.key }}" {% if account.key == account_key %}selected{% endif %}>{{ account.label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </div>
+</form>
+
+<section class="card data-card">
+    <div class="section-heading">
+        <h2>Imported Snapshots</h2>
+        {% if snapshots %}<span class="muted">{{ snapshots|length }} snapshot{% if snapshots|length != 1 %}s{% endif %}</span>{% endif %}
+    </div>
+
+    {% if snapshots %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+            <tr>
+                <th>Date</th>
+                <th>Imported At</th>
+                <th class="numeric">Portfolio Value</th>
+                <th class="numeric">$ Added</th>
+                <th class="numeric">$ Withdrawn</th>
+                <th></th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for snapshot in snapshots %}
+            <tr>
+                <form method="post" action="/snapshots/{{ snapshot.id }}">
+                    <td>{{ snapshot.snapshot_date.strftime('%Y-%m-%d') }}</td>
+                    <td>{{ snapshot.snapshot_date.strftime('%H:%M') }}</td>
+                    <td class="numeric">
+                        {% if snapshot.total_value is not none %}${{ "{:,.2f}".format(snapshot.total_value) }}{% else %}—{% endif %}
+                    </td>
+                    <td class="numeric">
+                        <input type="number" name="external_added" value="{{ "%.2f"|format(snapshot.external_added) }}" min="0" step="0.01" style="width: 130px;">
+                    </td>
+                    <td class="numeric">
+                        <input type="number" name="external_withdrawn" value="{{ "%.2f"|format(snapshot.external_withdrawn) }}" min="0" step="0.01" style="width: 130px;">
+                    </td>
+                    <td><button class="button button-light" type="submit">Save</button></td>
+                </form>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p class="muted">Only money entering or leaving the account belongs here. Dividends, purchases, sales and other internal activity are already part of the imported holdings.</p>
+    {% else %}
+    <p class="empty-state">No brokerage Excel snapshots are available for this account.</p>
+    {% endif %}
+</section>
+{% endblock %}
