@@ -1,6 +1,8 @@
 """Tests for the Sprint 4.4 responsive Portfolio page."""
 from datetime import date, datetime
 from decimal import Decimal
+import sys
+import types
 
 from fastapi.testclient import TestClient
 
@@ -64,3 +66,79 @@ def test_portfolio_page_renders_summary(monkeypatch):
     assert "-1.61%" in response.text
     assert "Brokerage Summary" in response.text
 
+
+
+def test_portfolio_page_has_update_controls():
+    response = client.get("/portfolio")
+    assert response.status_code == 200
+    assert 'action="/portfolio/update"' in response.text
+    assert 'Update Portfolio' in response.text
+    assert 'action="/portfolio/update-tsx"' in response.text
+    assert 'Update TSX' in response.text
+
+
+def test_portfolio_update_calls_valuation_service(monkeypatch):
+    calls = {}
+
+    class FakeValuationService:
+        def __init__(self, session):
+            calls["session"] = session
+
+        def update_all_accounts(self):
+            calls["updated"] = True
+            return Decimal("123456.78")
+
+    class FakeSession:
+        def close(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "yfinance", types.ModuleType("yfinance"))
+    monkeypatch.setattr("src.services.portfolio_valuation_service.PortfolioValuationService", FakeValuationService)
+    monkeypatch.setattr("src.api.main._portfolio_page_context", lambda session: {
+        "accounts": [], "brokerages": [], "total_value": Decimal("123456.78"),
+        "daily_change": Decimal("0"), "daily_percent": Decimal("0"),
+        "tsx": Decimal("0"), "updated_at": None, "valuation_date": date.today(),
+    })
+    monkeypatch.setattr("src.api.main.get_session", lambda: FakeSession())
+    response = client.post("/portfolio/update")
+    assert response.status_code == 200
+    assert calls["updated"] is True
+    assert "Portfolio updated: $123,456.78" in response.text
+
+
+def test_portfolio_update_tsx_calls_market_price_service(monkeypatch):
+    class FakePrice:
+        change_percent = Decimal("-1.61")
+
+    class FakeMarketPriceService:
+        def get_price(self, symbol):
+            assert symbol == "^GSPTSE"
+            return FakePrice()
+
+    class FakeSession:
+        def close(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "yfinance", types.ModuleType("yfinance"))
+    monkeypatch.setattr("src.services.market_price_service.MarketPriceService", FakeMarketPriceService)
+    monkeypatch.setattr("src.api.main._portfolio_page_context", lambda session: {
+        "accounts": [], "brokerages": [], "total_value": Decimal("0"),
+        "daily_change": Decimal("0"), "daily_percent": Decimal("0"),
+        "tsx": Decimal("0"), "updated_at": None, "valuation_date": date.today(),
+    })
+    monkeypatch.setattr("src.api.main.get_session", lambda: FakeSession())
+    response = client.post("/portfolio/update-tsx")
+    assert response.status_code == 200
+    assert "TSX updated: -1.61%" in response.text
+
+
+def test_portfolio_page_has_visible_progress_indicator_and_horizontal_actions():
+    response = client.get("/portfolio")
+    assert response.status_code == 200
+    assert 'id="update-progress"' in response.text
+    assert 'class="progress-track"' in response.text
+    assert 'event.preventDefault()' in response.text
+    assert 'class="portfolio-actions"' in response.text
+    assert 'class="portfolio-heading-row"' in response.text
+    assert 'const response = await fetch(form.action' in response.text
+    assert 'document.write(html)' in response.text

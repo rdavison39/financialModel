@@ -1,3 +1,9 @@
+git add .
+git commit -m "Sprint 4 complete"
+git tag -a "sprint-4-complete-prior-to-sprint-5" -m "sprint 4 complete - prior to sprint 5"
+git push origin --follow-tags
+
+
 # Davison Financial Model — Developer README
 
 **Current handoff:** September 29, 2026

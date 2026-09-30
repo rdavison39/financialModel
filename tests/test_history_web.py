@@ -181,3 +181,29 @@ def test_holdings_history_uses_existing_comparison_service(monkeypatch):
     assert response.status_code == 200
     assert "ABC" in response.text
     assert "$+10.00" in response.text
+
+
+def test_growth_benchmark_starts_at_first_portfolio_plot_date(monkeypatch):
+    from src.api.main import _benchmark_series
+
+    class FakeService:
+        def get_benchmark_history(self, symbol, start_date, end_date):
+            return [
+                BenchmarkHistoryPoint(date(2025, 9, 29), Decimal("35000")),
+                BenchmarkHistoryPoint(date(2026, 9, 17), Decimal("35874.26")),
+                BenchmarkHistoryPoint(date(2026, 9, 29), Decimal("35350")),
+            ]
+
+    series = _benchmark_series(
+        FakeService(),
+        "TSX Composite",
+        "",
+        "% Growth Since Start",
+        date(2025, 9, 29),
+        date(2026, 9, 29),
+        plot_dates={date(2026, 9, 17), date(2026, 9, 29)},
+    )
+
+    assert series[0]["date"] == "2026-09-17"
+    assert Decimal(series[0]["value"]) == Decimal("0")
+    assert Decimal(series[-1]["value"]) < Decimal("0")

@@ -30,9 +30,31 @@ a { color: inherit; }
 }
 
 /* Sprint 4.4 Portfolio page */
-.portfolio-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.portfolio-heading-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.portfolio-actions { display: flex; flex-wrap: nowrap; gap: 12px; align-items: center; justify-content: flex-end; margin: 0; flex: 0 0 auto; }
+.portfolio-actions form { margin: 0; display: block; }
+.portfolio-actions .button { min-width: 140px; text-align: center; white-space: nowrap; }
+.update-progress { margin: 0 0 16px; padding: 10px 14px; border: 1px solid #d8dee6; border-radius: 7px; background: #f8fafc; color: #344054; }
+.progress-track { width: 100%; height: 8px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: #e5e7eb; }
+.progress-bar { width: 35%; height: 100%; border-radius: inherit; background: #374151; animation: portfolio-progress 1.2s ease-in-out infinite; }
+@keyframes portfolio-progress { 0% { transform: translateX(-120%); } 100% { transform: translateX(330%); } }
+.button:disabled { opacity: .55; cursor: wait; }
+@media (max-width: 759px) {
+    .portfolio-heading-row { flex-direction: column; }
+    .portfolio-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+}
+
+
+.portfolio-heading { display: block; }
 .button { display: inline-block; padding: 9px 14px; border-radius: 7px; background: #374151; color: #fff; text-decoration: none; font-weight: 600; }
 .button:hover { background: #1f2937; }
+.button-group { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.button-group form { margin: 0; }
+.status-message { margin: 0 0 16px; padding: 10px 14px; border-radius: 7px; background: #f8fafc; border: 1px solid #d8dee6; }
+.status-message.positive { color: #15803d; }
+.status-message.negative { color: #b91c1c; }
+.brokerage-disabled { opacity: .5; }
+.brokerage-disabled input { cursor: not-allowed; }
 .portfolio-summary-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 16px; }
 .metric-card { padding: 16px; }
 .metric-label { display: block; color: #667085; font-size: .88rem; margin-bottom: 5px; }

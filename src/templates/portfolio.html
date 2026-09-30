@@ -1,13 +1,32 @@
 {% extends "base.html" %}
 {% block title %}Portfolio — Financial Model{% endblock %}
+
 {% block content %}
 <section class="page-heading portfolio-heading">
-    <div>
-        <h1>Portfolio</h1>
-        <p>Current portfolio values and daily performance.</p>
+    <div class="portfolio-heading-row">
+        <div>
+            <h1>Portfolio</h1>
+            <p>Current portfolio values and daily performance.</p>
+        </div>
+        <div class="portfolio-actions" aria-label="Portfolio actions">
+            <form method="post" action="/portfolio/update" data-update-form data-progress-label="Updating portfolio...">
+                <button class="button" type="submit">Update Portfolio</button>
+            </form>
+            <form method="post" action="/portfolio/update-tsx" data-update-form data-progress-label="Updating TSX...">
+                <button class="button" type="submit">Update TSX</button>
+            </form>
+            <a class="button button-light" href="/portfolio">Refresh</a>
+        </div>
     </div>
-    <a class="button" href="/portfolio">Refresh</a>
+    <div class="update-progress" id="update-progress" hidden role="status" aria-live="polite">
+        <span id="update-progress-label">Updating...</span>
+        <div class="progress-track" aria-hidden="true"><div class="progress-bar"></div></div>
+    </div>
 </section>
+
+{% if message %}
+<p class="status-message {{ message_class }}" role="status">{{ message }}</p>
+{% endif %}
 
 <section class="portfolio-summary-grid" aria-label="Portfolio summary">
     <article class="card metric-card">
@@ -79,4 +98,52 @@
     </div>
     {% else %}<p class="empty-state">No accounts are included in the portfolio.</p>{% endif %}
 </section>
+
+<script>
+(() => {
+    const progress = document.getElementById("update-progress");
+    const label = document.getElementById("update-progress-label");
+    if (!progress || !label) return;
+
+    document.querySelectorAll("form[data-update-form]").forEach((form) => {
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            label.textContent = form.dataset.progressLabel || "Updating...";
+            progress.hidden = false;
+
+            document.querySelectorAll("form[data-update-form] button").forEach((button) => {
+                button.disabled = true;
+            });
+
+            try {
+                // Use fetch rather than normal form navigation so the browser
+                // keeps this page alive and can display the indeterminate
+                // progress bar for the entire server-side update.
+                const response = await fetch(form.action, {
+                    method: "POST",
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                });
+                const html = await response.text();
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                // The existing POST endpoints return the complete refreshed
+                // Portfolio page, including the success/error message.
+                document.open();
+                document.write(html);
+                document.close();
+            } catch (error) {
+                label.textContent = `Update failed: ${error.message}`;
+                progress.hidden = false;
+                document.querySelectorAll("form[data-update-form] button").forEach((button) => {
+                    button.disabled = false;
+                });
+            }
+        });
+    });
+})();
+</script>
+
 {% endblock %}

@@ -41,6 +41,28 @@
         </div>
     </div>
 
+    {% if title == 'Portfolio History' %}
+    <fieldset class="account-selector brokerage-selector">
+        <legend>Brokerage Lines</legend>
+        <div class="account-checks brokerage-checks">
+            {% for brokerage in brokerage_line_options %}
+            <label class="account-check{% if not percent_view %} brokerage-disabled{% endif %}">
+                <input type="checkbox" name="brokerage_lines" value="{{ brokerage }}" {% if brokerage in brokerage_lines %}checked{% endif %} {% if not percent_view %}disabled{% endif %} onchange="this.form.submit()">
+                <span>{{ brokerage }}</span>
+            </label>
+            {% endfor %}
+        </div>
+        {% if percent_view %}
+        <span class="muted">Show the combined performance of the selected brokerage accounts.</span>
+        {% else %}
+        <span class="muted">Available only for percentage views.</span>
+        {% for brokerage in brokerage_lines %}
+        <input type="hidden" name="brokerage_lines" value="{{ brokerage }}">
+        {% endfor %}
+        {% endif %}
+    </fieldset>
+    {% endif %}
+
     <fieldset class="account-selector">
         <legend>Accounts</legend>
         <div class="account-actions">
@@ -189,6 +211,31 @@ function drawHistoryChart() {
         text(left - 8, yy + 4, percentView ? value.toFixed(1) + '%' : '$' + value.toLocaleString(undefined, {maximumFractionDigits: 0}), {'text-anchor': 'end', 'fill': '#667085', 'font-size': '12'});
     }
 
+    // Match the desktop graph: show a small, readable set of date labels
+    // rather than every valuation/trading date.
+    const axisDates = [...new Set(
+        chartSeries.flatMap(series =>
+            series.points.filter(point => point.value !== null).map(point => point.date)
+        )
+    )].sort();
+    const labelCount = Math.min(6, axisDates.length);
+    const labelIndexes = labelCount <= 1
+        ? [0]
+        : Array.from({length: labelCount}, (_, i) =>
+            Math.round(i * (axisDates.length - 1) / (labelCount - 1))
+        );
+
+    labelIndexes.forEach(index => {
+        const dateValue = new Date(axisDates[index] + 'T00:00:00');
+        const xx = x(dateValue);
+        line(xx, height - bottom, xx, height - bottom + 5, {'stroke': '#94a3b8'});
+        text(xx, height - bottom + 22, axisDates[index], {
+            'text-anchor': index === 0 ? 'start' : index === labelIndexes[labelIndexes.length - 1] ? 'end' : 'middle',
+            'fill': '#667085',
+            'font-size': '12',
+        });
+    });
+
     chartSeries.forEach((series, seriesIndex) => {
         const points = series.points.filter(point => point.value !== null).map(point => {
             const d = new Date(point.date + 'T00:00:00');
@@ -198,14 +245,14 @@ function drawHistoryChart() {
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
         path.setAttribute('points', points.join(' '));
         path.setAttribute('fill', 'none');
-        path.setAttribute('stroke', series.benchmark ? '#7c3aed' : `hsl(${(seriesIndex * 67) % 360} 65% 45%)`);
+        path.setAttribute('stroke', series.benchmark ? '#7c3aed' : series.brokerage ? (series.label === 'BMO' ? '#2563eb' : '#dc2626') : '#111827');
         path.setAttribute('stroke-width', series.benchmark ? '2' : '3');
         path.setAttribute('stroke-dasharray', series.benchmark ? '7 5' : '');
         svg.appendChild(path);
     });
 
     chartSeries.forEach((series, index) => {
-        text(left + index * 190, 18, series.label, {'fill': series.benchmark ? '#7c3aed' : '#344054', 'font-size': '13', 'font-weight': '600'});
+        text(left + index * 190, 18, series.label, {'fill': series.benchmark ? '#7c3aed' : series.brokerage ? (series.label === 'BMO' ? '#2563eb' : '#dc2626') : '#344054', 'font-size': '13', 'font-weight': '600'});
     });
 }
 

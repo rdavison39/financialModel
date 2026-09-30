@@ -200,8 +200,14 @@ def _benchmark_series(
     view: str,
     start_date: date,
     end_date: date,
+    plot_dates: set[date] | None = None,
 ) -> list[dict[str, object]]:
-    """Build the selected benchmark series for percentage views."""
+    """Build the selected benchmark series for percentage views.
+
+    When plot_dates is supplied, only those dates are returned. This keeps
+    the benchmark visually aligned with the portfolio valuation dates
+    rather than plotting every market-trading day in the selected range.
+    """
     symbol = _benchmark_symbol(benchmark_name, custom_symbol)
     if not symbol or not _is_percent_view(view):
         return []
@@ -216,42 +222,49 @@ def _benchmark_series(
         return []
 
     if view == "% Growth Since Start":
-        points = [point for point in points if point.snapshot_date >= start_date]
+        # The benchmark must start at the same effective date as the
+        # portfolio graph.  The selected date range can begin much earlier
+        # than the first portfolio valuation (for example, the database may
+        # only contain recent valuations).  Using start_date here would make
+        # TSX show growth over the entire requested year while the portfolio
+        # line starts at its first actual valuation date.
+        baseline_date = min(plot_dates) if plot_dates else start_date
+        points = [point for point in points if point.snapshot_date >= baseline_date]
         if not points:
             return []
         first = points[0].value
-        values = [
-            Decimal("0")
-            if first == 0
-            else (point.value - first) / first * Decimal("100")
+        values = {
+            point.snapshot_date: (
+                Decimal("0")
+                if first == 0
+                else (point.value - first) / first * Decimal("100")
+            )
             for point in points
-        ]
-    else:
-        prior = None
-        for point in points:
-            if point.snapshot_date < start_date:
-                prior = point.value
-        values = []
-        plotted = []
-        for point in points:
-            if point.snapshot_date < start_date:
-                continue
-            if prior is None or prior == 0:
-                value = None
-            else:
-                value = (point.value - prior) / prior * Decimal("100")
-            prior = point.value
-            if value is not None:
-                plotted.append(point.snapshot_date)
-                values.append(value)
+        }
+        dates = (plot_dates & values.keys()) if plot_dates is not None else values.keys()
         return [
-            {"date": point.isoformat(), "value": str(value)}
-            for point, value in zip(plotted, values)
+            {"date": point.isoformat(), "value": str(values[point])}
+            for point in sorted(dates)
         ]
 
+    prior = None
+    values = {}
+    for point in points:
+        if point.snapshot_date < start_date:
+            prior = point.value
+            continue
+        if prior is None or prior == 0:
+            value = None
+        else:
+            value = (point.value - prior) / prior * Decimal("100")
+        prior = point.value
+        if value is not None:
+            values[point.snapshot_date] = value
+
+    dates = (plot_dates & values.keys()) if plot_dates is not None else values.keys()
     return [
-        {"date": point.snapshot_date.isoformat(), "value": str(value)}
-        for point, value in zip(points, values)
+        {"date": point.isoformat(), "value": str(values[point])}
+        for point in sorted(dates)
     ]
 
 
@@ -349,6 +362,61 @@ def _account_history_series(
     return result
 
 
+def _brokerage_history_series(
+    service: PortfolioHistoryService,
+    points,
+    view: str,
+    trading_dates: set[date],
+    brokerage_ids: dict[str, list[int]],
+    selected_brokerages: list[str],
+) -> list[dict[str, object]]:
+    """Build optional combined brokerage series for Portfolio History percentage views."""
+    if view not in {"% Growth Since Start", "% Day's Gain/Loss"}:
+        return []
+
+    result = []
+    for brokerage_name in selected_brokerages:
+        account_ids = brokerage_ids.get(brokerage_name, [])
+        if not account_ids:
+            continue
+
+        brokerage_points = service.get_aggregated_history(
+            points[0].snapshot_date if points else date.min,
+            points[-1].snapshot_date if points else date.min,
+            account_ids,
+        )
+        selected = [
+            point for point in brokerage_points
+            if point.snapshot_date in trading_dates
+        ]
+        if view == "% Growth Since Start":
+            if not selected:
+                continue
+            first = selected[0].total_value
+            values = [
+                Decimal("0")
+                if first == 0
+                else (point.total_value - first) / first * Decimal("100")
+                for point in selected
+            ]
+        else:
+            values = [point.daily_change_percent for point in selected]
+
+        result.append(
+            {
+                "label": brokerage_name,
+                "points": [
+                    {"date": point.snapshot_date.isoformat(), "value": str(value)}
+                    for point, value in zip(selected, values)
+                    if value is not None
+                ],
+                "brokerage": True,
+            }
+        )
+
+    return result
+
+
 def _render_history_page(
     request: Request,
     session: Session,
@@ -360,6 +428,7 @@ def _render_history_page(
     view: str,
     benchmark: str,
     custom_benchmark: str,
+    brokerage_lines: list[str] | None = None,
 ):
     """Build and render the common portfolio/account history page."""
     start, end = _date_range(start_date, end_date)
@@ -369,6 +438,8 @@ def _render_history_page(
         benchmark = DEFAULT_BENCHMARK
     if not _is_percent_view(view):
         benchmark = "None"
+
+    selected_brokerages = [name for name in (brokerage_lines or []) if name in {"BMO", "NB"}]
 
     accounts = _history_accounts(session)
     account_ids = _selected_account_ids(accounts, selected_keys)
@@ -456,6 +527,30 @@ def _render_history_page(
                         }
                     )
 
+    if page_type == "portfolio" and _is_percent_view(view) and selected_brokerages:
+        brokerage_ids: dict[str, list[int]] = {"BMO": [], "NB": []}
+        for item in accounts:
+            if int(item["id"]) in account_ids:
+                key = str(item["key"])
+                brokerage_name = key.split("|", 1)[0]
+                if brokerage_name in brokerage_ids:
+                    brokerage_ids[brokerage_name].append(int(item["id"]))
+
+        chart_series.extend(
+            _brokerage_history_series(
+                history_service,
+                points,
+                view,
+                trading_dates,
+                brokerage_ids,
+                selected_brokerages,
+            )
+        )
+
+    plot_dates = None
+    if page_type == "portfolio":
+        plot_dates = {point.snapshot_date for point in points}
+
     benchmark_series = _benchmark_series(
         history_service,
         benchmark,
@@ -463,6 +558,7 @@ def _render_history_page(
         view,
         start,
         end,
+        plot_dates=plot_dates,
     )
     if benchmark_series:
         chart_series.append({"label": benchmark, "points": benchmark_series, "benchmark": True})
@@ -493,6 +589,8 @@ def _render_history_page(
                 key=lambda row: (row.get("date"), row.get("label", "")),
             ),
             "percent_view": _is_percent_view(view),
+            "brokerage_lines": selected_brokerages,
+            "brokerage_line_options": ["BMO", "NB"],
         },
     )
 
@@ -585,19 +683,102 @@ def web_home() -> RedirectResponse:
     return RedirectResponse(url="/portfolio", status_code=307)
 
 
+def _render_portfolio_page(
+    request: Request,
+    session: Session,
+    *,
+    message: str = "",
+    message_class: str = "",
+    tsx_override: Decimal | None = None,
+):
+    """Render the current Portfolio web page."""
+    page = WEB_PAGES["/portfolio"]
+    context = _portfolio_page_context(session)
+    if tsx_override is not None:
+        context["tsx"] = tsx_override
+    return templates.TemplateResponse(
+        request=request,
+        name="portfolio.html",
+        context={
+            **page,
+            **context,
+            "navigation": NAVIGATION,
+            "message": message,
+            "message_class": message_class,
+        },
+    )
+
+
 @app.get("/portfolio", include_in_schema=False)
 def web_portfolio(
     request: Request,
     session: Annotated[Session, Depends(get_db)],
 ):
     """Render the current Portfolio web page from saved valuations."""
-    page = WEB_PAGES["/portfolio"]
-    context = _portfolio_page_context(session)
-    return templates.TemplateResponse(
-        request=request,
-        name="portfolio.html",
-        context={**page, **context, "navigation": NAVIGATION},
-    )
+    return _render_portfolio_page(request, session)
+
+
+@app.post("/portfolio/update", include_in_schema=False)
+def web_portfolio_update(
+    request: Request,
+    session: Annotated[Session, Depends(get_db)],
+):
+    """Update all portfolio account valuations using the existing service."""
+    try:
+        from src.services.portfolio_valuation_service import PortfolioValuationService
+
+        service = PortfolioValuationService(session)
+        total_value = service.update_all_accounts()
+        tsx_change = getattr(service, "tsx_daily_change_percent", None)
+        context = _portfolio_page_context(session)
+        if tsx_change is not None:
+            context["tsx"] = tsx_change
+        return templates.TemplateResponse(
+            request=request,
+            name="portfolio.html",
+            context={
+                **WEB_PAGES["/portfolio"],
+                **context,
+                "navigation": NAVIGATION,
+                "message": f"Portfolio updated: ${total_value:,.2f}",
+                "message_class": "positive",
+            },
+        )
+    except Exception as exc:
+        return _render_portfolio_page(
+            request,
+            session,
+            message=f"Portfolio update failed: {type(exc).__name__}: {exc}",
+            message_class="negative",
+        )
+
+
+@app.post("/portfolio/update-tsx", include_in_schema=False)
+def web_portfolio_update_tsx(
+    request: Request,
+    session: Annotated[Session, Depends(get_db)],
+):
+    """Retrieve the current TSX daily change without updating the portfolio."""
+    try:
+        from src.services.market_price_service import MarketPriceService
+
+        price = MarketPriceService().get_price("^GSPTSE")
+        if price is None or price.change_percent is None:
+            raise ValueError("Could not retrieve the TSX Composite daily change.")
+        return _render_portfolio_page(
+            request,
+            session,
+            message=f"TSX updated: {price.change_percent:+.2f}%",
+            message_class="positive",
+            tsx_override=price.change_percent,
+        )
+    except Exception as exc:
+        return _render_portfolio_page(
+            request,
+            session,
+            message=f"TSX update failed: {type(exc).__name__}: {exc}",
+            message_class="negative",
+        )
 
 
 @app.get("/portfolio/history", include_in_schema=False)
@@ -610,6 +791,7 @@ def web_portfolio_history(
     view: str = Query(default="Portfolio Value"),
     benchmark: str = Query(default=DEFAULT_BENCHMARK),
     custom_benchmark: str = Query(default=""),
+    brokerage_lines: list[str] | None = Query(default=None),
 ):
     """Render Portfolio History using the existing history services."""
     return _render_history_page(
@@ -622,6 +804,7 @@ def web_portfolio_history(
         view=view,
         benchmark=benchmark,
         custom_benchmark=custom_benchmark,
+        brokerage_lines=brokerage_lines,
     )
 
 
