@@ -39,6 +39,8 @@ class ImportResult:
     cash_imported: int
     duplicate: bool
     replaced: bool = False
+    external_added: Decimal = Decimal("0")
+    external_withdrawn: Decimal = Decimal("0")
 
 
 class ImportService:
@@ -115,6 +117,8 @@ class ImportService:
                     cash_imported=0,
                     duplicate=True,
                     replaced=False,
+                    external_added=preserved_added,
+                    external_withdrawn=preserved_withdrawn,
                 )
 
             # Newer report for the same calendar day, or an explicit force
@@ -199,6 +203,8 @@ class ImportService:
             cash_imported=cash_imported,
             duplicate=False,
             replaced=replaced,
+            external_added=preserved_added,
+            external_withdrawn=preserved_withdrawn,
         )
 
     def _delete_snapshot_rows(

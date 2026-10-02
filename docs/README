@@ -1,6 +1,6 @@
 git add .
-git commit -m "Sprint 4 complete"
-git tag -a "sprint-4-complete-prior-to-sprint-5" -m "sprint 4 complete - prior to sprint 5"
+git commit -m "Sprint 6 complete"
+git tag -a "sprint-6-complete-prior-to-sprint-5" -m "sprint 6 complete - prior to sprint 7"
 git push origin --follow-tags
 
 
